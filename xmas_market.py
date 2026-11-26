@@ -4,7 +4,7 @@
 Ops Christmas Market — 터미널 메타버스 대시보드 PoC (mock 데이터, 픽셀아트)
 
   시작하면 타이틀(MERRY BUGMAS) → 메뉴(서비스·시나리오 고르기) → 스테이지.
-  트래픽(Grafana 자리)      → 입구 앞 대기열. 트래픽이 오르면 줄이 길어진다.
+  트래픽(Grafana 자리)      → 상점 앞 대기열. 트래픽이 오르면 줄이 길어진다.
   Sentry 미해결 이슈        → 호두까기 인형의 쥐. 이슈 하나 = 쥐 한 마리.
   sentry-bot 에이전트       → 호두까기 병정. triage → fix → review → MR 로 쥐를 처치한다.
 
@@ -69,6 +69,18 @@ def dw(s):
 
 def pad(s, n):
     return s + " " * max(0, n - dw(s))
+
+
+def fit_text(s, n):
+    """표시 폭 n 으로 자르고(…) 모자라면 공백으로 채운다."""
+    if dw(s) <= n:
+        return pad(s, n)
+    out = ""
+    for c in s:
+        if dw(out + c) > n - 1:
+            break
+        out += c
+    return pad(out + "…", n)
 
 
 def fit(segs, n):
@@ -199,7 +211,8 @@ RAT_FRONT = [  # 들켰을 때 - 정면으로 굳는다
     "..ddddd..",
     ".rp...pr.",
 ]
-RAT_DEAD = [row.replace("k", "x") for row in RAT_WALK[0][::-1]]  # 뒤집힌 쥐, 눈은 x
+RAT_DEAD = [row.replace("k", "x") for row in RAT_WALK[0][::-1]]
+RAT_MINI = ["..ggg.", "pgggkg", "..r.r."]  # 뒤쪽 우리 안의 잡은 쥐 (6 x 3)  # 뒤집힌 쥐, 눈은 x
 
 # 호두까기 병정 (7 x 14)
 SOLDIER_PAL = {"K": 16, "Y": 220, "S": 223, "k": 16, "W": 255, "R": 160, "B": 25, "m": 52}
@@ -264,8 +277,8 @@ SERVICES = [
     ("MOBILE", "모바일 웹", "m. 도메인 전체", 0.45, 1.4),
 ]
 SCENARIOS = [
-    ("traffic", "🎄 트래픽", "광장 입장 대기열",
-     ["방문객이 입구(ENTRY) 앞에 한 줄로 선다.", "rps↑ = 줄이 길어진다. 화면 밖까지 밀리면 인파 경보."]),
+    ("traffic", "🎄 트래픽", "상점 앞 대기열",
+     ["손님이 상점(SHOP) 앞에 한 줄로 서서 차례로 계산한다.", "rps↑ = 줄이 길어진다. 화면 밖까지 밀리면 인파 경보."]),
     ("sentry", "🐭 Sentry 버그", "병정의 쥐 사냥",
      ["Sentry 미해결 이슈 = 쥐. 병정(sentry-bot)이 출동해", "triage → fix → review → MR 로 처치한다."]),
     ("overview", "📊 개요", "숫자 대시보드",
@@ -386,6 +399,7 @@ class Mouse:
         self.born = world.t
         self.step = R.random()
         self.priority = False  # 채팅 focus 지시
+        self.assigned = None  # 채팅 명령으로 이 쥐를 맡은 병정 번호(0부터)
 
     def update(self, world, dt):
         self.step += dt
@@ -404,11 +418,31 @@ class Mouse:
             self.ttl -= dt
 
 
+SOLDIER_NAMES = ["루돌프", "진저", "호두"]
+ISSUE_RE = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]+-[0-9A-Za-z]+")
+# 명령 뜻 (앞에 있는 것부터 본다)
+ORDER_WORDS = [
+    ("report", ("보고", "상황", "뭐해", "현황", "어때", "status", "report")),
+    ("noise", ("noise", "노이즈", "무시", "쫓아")),
+    ("human", ("사람", "담당자", "휴먼", "human", "에스컬")),
+    ("catch", ("잡아", "잡자", "처치", "해결", "고쳐", "수정", "먼저", "우선", "맡아", "catch", "fix", "focus")),
+    ("rest", ("복귀", "쉬어", "돌아와", "대기", "멈춰", "그만", "휴식", "rest", "home", "stop")),
+    ("go", ("출동", "가자", "일해", "시작", "재개", "나가", "go", "start")),
+]
+OUTCOME_WORD = {"fixed": "MR 생성", "noise": "noise 쫓아냄", "human": "사람 호출"}
+STATE_WORD = {"walk": "추격", "triage": "트리아지", "fix": "수정", "review": "리뷰", "shoo": "쫓는", "flag": "사람 호출",
+              "after": "마무리"}
+
+
 class Soldier:
+    """sentry-bot 서브 에이전트 하나. 채팅 명령(World.order)을 받아 움직인다."""
     W, H = 7, 14
 
     def __init__(self, idx, world):
         self.idx = idx
+        self.name = SOLDIER_NAMES[idx % len(SOLDIER_NAMES)]
+        self.off = False  # 복귀 명령: 지금 건만 마치고 위병소에서 대기
+        self.speech, self.speech_t = "", 0.0
         self.home = 2.0
         self.x = self.home
         self.face = 1
@@ -422,24 +456,44 @@ class Soldier:
     def busy(self):
         return self.state != "home"
 
+    @property
+    def label(self):
+        return "병정%d %s" % (self.idx + 1, self.name)
+
+    def say(self, world, text, color=183):
+        """말풍선 + 작전 로그 한 줄 (명령에 대한 대답)."""
+        self.speech, self.speech_t = text, 4.0
+        world.log("💂 %s: %s" % (self.label, text), color)
+
+    def release(self):
+        """쫓던 쥐를 놓아준다 (다른 쥐로 바꾸거나 복귀할 때)."""
+        if self.target is not None and self.target.state == "held":
+            self.target.state, self.target.claimed = "roam", None
+        self.target, self.bubble = None, ""
+
     def claim_next(self, world):
-        free = [m for m in world.mice if m.state == "roam" and m.claimed is None and 10 <= m.x <= world.w - 16]
+        free = [m for m in world.mice if m.state == "roam" and m.claimed is None and m.assigned in (None, self.idx)
+                and 10 <= m.x <= world.w - 16]
         if not free:
             return False
-        m = min(free, key=lambda m: (not m.priority, m.born, abs(m.x - self.x)))
+        m = min(free, key=lambda m: (m.assigned != self.idx, not m.priority, m.born, abs(m.x - self.x)))
         m.claimed, m.state = self.idx, "held"
         self.target = m
         self.state = "walk"
         self.bubble = ""
-        world.log("병정%d 출동 -> %s 발견" % (self.idx + 1, m.issue["id"]), 117)
+        world.log("%s 출동 -> %s 발견" % (self.label, m.issue["id"]), 117)
         return True
 
     def update(self, world, dt):
         self.phase += dt
+        self.speech_t -= dt
         m = self.target
         if self.state == "home":
-            backlog = sum(1 for mm in world.mice if mm.state == "roam" and mm.claimed is None)
-            if backlog >= 1 + 3 * self.idx:
+            if self.off:
+                return
+            mine = any(mm.assigned == self.idx and mm.state == "roam" for mm in world.mice)
+            backlog = sum(1 for mm in world.mice if mm.state == "roam" and mm.claimed is None and mm.assigned is None)
+            if mine or backlog >= 1 + 3 * self.idx:
                 self.claim_next(world)
             return
         if self.state in ("walk", "return"):
@@ -491,24 +545,27 @@ class Soldier:
             else:
                 world.mr += 1
                 world.stats["fixed"] += 1
-                m.state, m.ttl = "dead", 1.2
+                m.state, m.ttl = "dead", 0.4
                 world.poof(m.x + 7, m.y - 2)
-                world.log("MR !%d 생성 - fix: %s 처치 완료" % (world.mr, iid), 46)
+                world.log("MR !%d 생성 - fix: %s 처치 완료 (%s)" % (world.mr, iid, self.label), 46)
+                world.record(m, "fixed", self, world.mr)
                 self.bubble, self.state, self.timer = "MR !%d" % world.mr, "after", 1.0
         elif self.state == "shoo":
             m.state, m.dir = "flee", (1 if m.x > self.x else -1)
             world.stats["noise"] += 1
             world.log("%s 은(는) noise - 레포 밖 출처, 쫓아냄" % iid, 245)
+            world.record(m, "noise", self)
             self.state, self.timer = "after", 0.3
         elif self.state == "flag":
             m.state, m.ttl = "caged", 30.0
             world.stats["human"] += 1
             world.log("%s needs-human - 우리에 가두고 담당자 호출" % iid, 226)
+            world.record(m, "human", self)
             self.state, self.timer = "after", 0.4
         elif self.state == "after":
             self.target = None
             self.bubble = ""
-            if not self.claim_next(world):
+            if self.off or not self.claim_next(world):
                 self.state = "return"
 
 
@@ -523,6 +580,7 @@ class World:
         self.src = MockSource()
         self.t = 0.0
         self.w = self.sh = 0
+        self.lanes = [1, 1]  # layout() 전에 쥐가 생겨도 되도록 (layout 이 제자리로 옮긴다)
         self.mice, self.particles = [], []
         self.queue, self.passing = [], []  # 입장 대기열 · 입구를 지나가는 사람 [x, y, pal, step]
         self.admit_acc, self.admitted = 0.0, 0
@@ -533,6 +591,9 @@ class World:
         self.hist_acc = 0.0
         self.mr = 1400
         self.stats = {"fixed": 0, "noise": 0, "human": 0, "blocked": 0}
+        self.history = []  # 잡은 쥐 기록: 처리 결과(fixed/noise/human)마다 한 건
+        self.flying = []  # 처치된 쥐가 뒤쪽 우리로 날아가는 중: [x, y, 우리 안 번호, 경과]
+        self.show_hist, self.hist_sel = False, None  # 기록 창을 열었는지 · 강조할 이슈 ID
         self.auto = True
         self.fired = set()
         self.phase = "intro"  # intro(타이틀) / menu(스테이지 고르기) / play
@@ -544,6 +605,7 @@ class World:
         self.view = "overview"  # overview(정적 개요) / traffic(광장) / sentry(전투)
         self.unseen = 0  # 광장을 보는 동안 새로 나온 쥐
         self.hits = []  # 클릭 영역 (x0, x1, y0, y1, 동작), 1부터 세는 칸 좌표
+        self.scene_hits = []
         self.log("크리스마스 마켓 개장! (mock 데이터)", 220, "all")
 
     @property
@@ -569,6 +631,7 @@ class World:
             self.mice, self.queue, self.passing, self.particles = [], [], [], []
             self.soldiers = [Soldier(i, self) for i in range(3)]
             self.stats = {"fixed": 0, "noise": 0, "human": 0, "blocked": 0}
+            self.history, self.show_hist, self.hist_sel, self.flying = [], False, None, []
             self.mr, self.admitted, self.admit_acc = 1400, 0, 0.0
             self.hist, self.ehist, self.spawn_times = [], [], []
             self.src.spikes, self.fired, self.t, self.logs = [], set(), 0.0, []
@@ -594,6 +657,111 @@ class World:
         else:
             self.set_view("intro")
 
+    # ---- 잡은 쥐 기록
+    def record(self, m, outcome, s, mr=None):
+        if outcome == "fixed":  # 처치한 쥐는 뒤쪽 우리로 날아간다
+            self.flying.append([m.x + 4, m.y - 3, sum(1 for r in self.history if r["outcome"] == "fixed"), 0.0])
+        self.history.append({"id": m.issue["id"], "title": m.issue["title"], "kind": m.issue["kind"],
+                             "outcome": outcome, "soldier": s.idx + 1, "mr": mr, "t": self.t})
+        self.history = self.history[-300:]
+
+    def open_history(self, iid=None):
+        """기록 창 열기. iid 를 주면 그 쥐 줄을 강조한다. 같은 걸 다시 부르면 닫는다."""
+        if self.show_hist and (iid is None or iid == self.hist_sel):
+            self.show_hist, self.hist_sel = False, None
+        else:
+            self.show_hist, self.hist_sel = True, iid
+
+    # ---- 병정(서브 에이전트)에게 내리는 명령
+    def find_soldiers(self, who):
+        """'2', '병정2', '2번', '진저', 'all/모두/전원' → 병정 목록."""
+        w = who.strip().lower()
+        if w in ("all", "모두", "전원", "다", "전체", "*"):
+            return list(self.soldiers)
+        num = re.search(r"\d", w)
+        if num and 1 <= int(num.group()) <= len(self.soldiers):
+            return [self.soldiers[int(num.group()) - 1]]
+        return [s for s in self.soldiers if s.name in who]
+
+    def order(self, text, who=None):
+        """자연어 명령 한 줄을 병정이 알아듣고 움직인다. who 가 없으면 문장에서 찾는다 ('병정2 …', '진저 …', '모두 …')."""
+        if who is None:
+            m = re.match(r"\s*(병정\s*\d|\d\s*번|\d|all|모두|전원|%s)\s*[,:야]?\s*(.*)" % "|".join(SOLDIER_NAMES), text)
+            who, text = (m.group(1), m.group(2)) if m else ("all", text)
+        targets = self.find_soldiers(who)
+        if not targets:
+            self.log("명령: '%s' 라는 병정은 없습니다 (1~%d, %s)" % (who, len(self.soldiers), "·".join(SOLDIER_NAMES)), 245, "all")
+            return
+        ids = [i.upper() for i in ISSUE_RE.findall(text)]
+        low = text.lower()
+        intent = next((name for name, words in ORDER_WORDS if any(k in low for k in words)), None)
+        if intent is None and ids:
+            intent = "catch"
+        if intent in ("catch", "noise", "human") and len(targets) > 1:
+            # 쥐 한 마리는 한 병정이: 놀고 있는 병정, 그다음 복귀 중인 병정, 그다음 번호 순
+            rank = {"home": 0, "return": 1, "walk": 2}
+            targets = [min(targets, key=lambda s: (s.off, rank.get(s.state, 3), s.idx))]
+        self.log("📣 명령 → %s: %s" % (", ".join(s.label for s in targets), text.strip()[:50]), 229, "all")
+        for s in targets:
+            self.do_order(s, intent, ids)
+
+    def do_order(self, s, intent, ids):
+        live = {m.issue["id"].upper(): m for m in self.mice if m.state in ("roam", "held", "caged")}
+        if intent in ("catch", "noise", "human"):
+            if not ids:
+                s.say(self, "어느 쥐요? 이슈 ID를 같이 말해 주세요 (예: WEB-2B1)")
+                return
+            m = live.get(ids[0])
+            if m is None:
+                done = [r for r in self.history if r["id"].upper() == ids[0]]
+                s.say(self, "%s 는 이미 처리했습니다 (%s)" % (ids[0], OUTCOME_WORD[done[-1]["outcome"]]) if done
+                      else "%s 쥐는 안 보입니다" % ids[0])
+                return
+            if m.state == "caged":
+                s.say(self, "%s 는 우리에 있어요. 담당자 확인을 기다리는 중입니다" % ids[0])
+                return
+            if m.state == "held" and m.claimed != s.idx:
+                s.say(self, "%s 는 병정%d 이 이미 잡고 있습니다" % (ids[0], m.claimed + 1))
+                return
+            if intent != "catch":
+                m.issue["kind"] = "noise" if intent == "noise" else "needs-human"
+                m.issue["review_block"] = False
+            prev = m.assigned
+            m.assigned, m.priority, s.off = s.idx, True, False
+            how = {"catch": "잡으러", "noise": "noise 로 쫓아내러", "human": "우리에 가두러"}[intent]
+            if prev is not None and prev != s.idx:
+                how = "병정%d 대신 %s" % (prev + 1, how)
+            if s.target is m:
+                s.say(self, "지금 %s 처리 중입니다!" % ids[0])
+            elif s.state in ("home", "walk", "return"):
+                s.release()
+                s.state = "home"
+                s.claim_next(self)
+                s.say(self, "알겠습니다! %s %s 갑니다" % (ids[0], how))
+            else:
+                s.say(self, "지금 %s 끝나는 대로 %s %s 가겠습니다" % (s.target.issue["id"], ids[0], how))
+        elif intent == "rest":
+            s.off = True
+            if s.state == "walk":
+                s.release()
+                s.state = "return"
+            s.say(self, "지금 건만 마치고 위병소로 복귀합니다" if s.state not in ("home", "return") else "위병소에서 대기하겠습니다")
+        elif intent == "go":
+            s.off = False
+            if s.state == "home" and not s.claim_next(self):
+                s.say(self, "출동 준비 완료! 지금은 잡을 쥐가 없어요")
+            else:
+                s.say(self, "출동합니다!")
+        elif intent == "report":
+            mine = [r for r in self.history if r["soldier"] == s.idx + 1]
+            cnt = {k: sum(1 for r in mine if r["outcome"] == k) for k in ("fixed", "noise", "human")}
+            queued = [m.issue["id"] for m in self.mice if m.assigned == s.idx and m.state == "roam"]
+            now = ("%s %s 중" % (s.target.issue["id"], STATE_WORD.get(s.state, s.state))) if s.target else \
+                ("%s 맡음, 곧 출동" % queued[0]) if queued else ("복귀 대기" if s.off else "위병소 대기")
+            s.say(self, "%s · 지금까지 MR %d · noise %d · 사람 %d" % (now, cnt["fixed"], cnt["noise"], cnt["human"]))
+        else:
+            s.say(self, "무슨 명령인지 모르겠어요 (예: WEB-2B1 잡아 / 복귀 / 출동 / 보고)", 245)
+
     def find_service(self, key):
         keys = [s[0].lower() for s in SERVICES]
         return keys.index(key.lower()) if key.lower() in keys else None
@@ -613,11 +781,12 @@ class World:
         rows = max(1, (y0 - (self.gpx + 2)) // 7 + 1)
         rows = min(3, rows if rows % 2 else rows - 1)
         xl, xr = 3, self.gate_x - 4
+        xr_up = xr - 3  # 위 줄은 상점 간판과 겹치지 않게 조금 왼쪽에서 꺾는다
         pts = [(xr, y0)]
         for r in range(rows):
             if r:
                 pts.append((pts[-1][0], y0 - 7 * r))
-            pts.append((xl if r % 2 == 0 else xr, y0 - 7 * r))
+            pts.append((xl if r % 2 == 0 else xr_up, y0 - 7 * r))
         pts.append((-4, pts[-1][1]))
         self.qpts = pts
         self.qvis = sum(abs(b[0] - a[0]) + abs(b[1] - a[1]) for a, b in zip(pts, pts[1:]))  # 화면에 보이는 줄 길이
@@ -683,7 +852,7 @@ class World:
 
     def set_view(self, v):
         if v == "menu":
-            self.phase = "menu"
+            self.phase, self.show_hist = "menu", False
         elif v == "intro":
             self.phase, self.intro_t = "intro", 0.0
         elif v in ("overview", "traffic", "sentry"):
@@ -732,12 +901,15 @@ class World:
             self.passing.append([x, y, p.pal, 0.0])
             self.admit_acc = 0.0
             self.admitted += 1
+            for _ in range(4):  # 계산: 동전이 튄다
+                self.particles.append([self.gate_x + 1, y + 2, R.uniform(-3, 3), R.uniform(-9, -4),
+                                       R.choice([220, 226, 214]), 0.6])
         for i, p in enumerate(self.queue):
             p.update(dt, Queuer.GAP * i)
         for p in self.passing:
-            p[0] += 12 * dt
+            p[0] += 8 * dt
             p[3] += dt
-        self.passing = [p for p in self.passing if p[0] < self.w + 2]
+        self.passing = [p for p in self.passing if p[0] < self.gate_x + 3]  # 카운터 뒤 가게 안으로
 
     # ---- 갱신
     def update(self, dt):
@@ -784,6 +956,9 @@ class World:
         for s in self.soldiers:
             s.update(self, dt)
 
+        for f in self.flying:
+            f[3] += dt
+        self.flying = [f for f in self.flying if f[3] < 1.2]
         for p in self.particles:
             p[0] += p[2] * dt
             p[1] += p[3] * dt
@@ -799,6 +974,13 @@ class World:
 
     # ---- 채팅(Codex) 브리지: .runtime/cmd 로 명령을 받고 .runtime/state.json 에 현황을 쓴다
     def command(self, line):
+        """채팅·패널 명령 한 줄. 잘못된 명령이 대시보드를 죽이지 않게 오류는 로그로만 남긴다."""
+        try:
+            self._command(line)
+        except Exception as e:  # noqa: BLE001
+            self.log("명령 처리 실패: %s (%s)" % (line.strip()[:30], type(e).__name__), 196, "all")
+
+    def _command(self, line):
         parts = line.strip().split(None, 1)
         if not parts:
             return
@@ -832,6 +1014,13 @@ class World:
                 self.log("채팅 지시: 서비스/화면을 모름 (%s)" % arg[:30], 245, "all")
             else:
                 self.start_stage(idx, scn)
+        elif op in ("tell", "order"):
+            self.order(arg)
+        elif op == "history":
+            if arg.lower() in ("off", "close", "닫기"):
+                self.show_hist, self.hist_sel = False, None
+            else:
+                self.open_history(arg.upper() or None)
         elif op == "say":
             self.log("💬 codex: " + arg, 183, "all")
         else:
@@ -850,7 +1039,10 @@ class World:
             "mice": [{"id": m.issue["id"], "title": m.issue["title"], "kind": m.issue["kind"],
                       "state": m.state, "chasedBy": None if m.claimed is None else m.claimed + 1}
                      for m in self.mice if m.state != "dead"],
-            "soldiers": [{"id": s.idx + 1, "state": s.state,
+            "history": [{"id": r["id"], "outcome": r["outcome"], "soldier": r["soldier"], "mr": r["mr"],
+                         "title": r["title"]} for r in self.history[-20:]],
+            "soldiers": [{"id": s.idx + 1, "name": s.name, "state": s.state, "off": s.off,
+                          "handled": sum(1 for r in self.history if r["soldier"] == s.idx + 1),
                           "target": s.target.issue["id"] if s.target else None} for s in self.soldiers],
             "stats": dict(self.stats, mrs=self.mr - 1400),
             "auto": self.auto,
@@ -939,6 +1131,7 @@ class World:
 
     def draw_bugs(self, cv, top):
         w, gpx, bottom = self.w, self.gpx, self.bottom
+        self.scene_hits = []  # (x0, x1, 행0, 행1, 동작): 장면 안 칸 좌표(0부터), compose 가 화면 좌표로 옮긴다
         # 위병소 (SENTRY box)
         bx = 1
         cv.rect(bx + 1, top, 6, 1, 255)
@@ -956,6 +1149,10 @@ class World:
         for m in sorted(self.mice, key=lambda m: m.y):
             if m.state == "caged":
                 continue
+            if m.state in ("dead", "held"):
+                iid = m.issue["id"]
+                self.scene_hits.append((int(m.x), int(m.x) + 14, max(0, (m.y - 5) // 2 - 1), m.y // 2,
+                                        lambda iid=iid: self.open_history(iid)))
             if m.state == "dead":
                 cv.blit(RAT_DEAD, m.x, m.y - 4, RAT_PAL, flip=m.dir < 0)
                 continue
@@ -1002,10 +1199,86 @@ class World:
                 bxx = min(max(0, int(x) + 3 - len(text) // 2), w - len(text))
                 cv.put(bxx, row, text, 16, 230, True)
                 row -= 1
+            if s.speech_t > 0:  # 명령에 대한 대답
+                text = " %s " % s.speech
+                bxx = min(max(0, int(x) + 3 - dw(text) // 2), max(0, w - dw(text)))
+                cv.put(bxx, row, text, 231, 53, True)
+                row -= 1
             cv.put(x + 3, row, str(s.idx + 1), 25, None, True)
+
+        # 위병소에서 대기 중인 병정의 대답은 위병소 위에
+        row = max(0, top // 2 - 1)
+        for s in self.soldiers:
+            if not s.busy and s.speech_t > 0 and row >= 0:
+                cv.put(1, row, " %d %s: %s " % (s.idx + 1, s.name, s.speech), 231, 53, True)
+                row -= 1
+
+        self.draw_trophy_cage(cv, top)
 
         for p in self.particles:
             cv.set(p[0], p[1], p[4])
+
+    def cage_box(self):
+        """뒤쪽(지평선 위) 잡은 쥐 우리: (x0, 윗 픽셀 행, 폭, 높이, 칸 수, 한 줄 칸 수)."""
+        cw_ = max(20, min(40, self.w // 3))
+        x0, top = self.w - cw_ - 2, self.gpx - 9
+        per_row = (cw_ - 2) // 7
+        return x0, top, cw_, 10, per_row * 2, per_row
+
+    def cage_slot(self, i):
+        x0, top, cw_, ch, cap, per_row = self.cage_box()
+        i %= cap
+        return x0 + 2 + (i % per_row) * 7, top + 2 + (i // per_row) * 4
+
+    def draw_trophy_cage(self, cv, top):
+        """처치한 쥐는 뒤쪽 우리에, 각각 무슨 버그였는지는 하늘의 게시판에."""
+        w = self.w
+        x0, ctop, cw_, ch, cap, per_row = self.cage_box()
+        fixed = [r for r in self.history if r["outcome"] == "fixed"]
+        landed = len(fixed) - len(self.flying)
+        cv.rect(x0, ctop, cw_, ch, 187)  # 우리 안: 짚 바닥 (회색 쥐가 잘 보이게)
+        for i in range(x0, x0 + cw_, 2):
+            cv.set(i, ctop + ch - 2, 180)
+        shown = fixed[:max(0, landed)][-cap:]
+        base = max(0, landed - cap)
+        for k, _ in enumerate(shown):
+            sx, sy = self.cage_slot(base + k)
+            cv.blit(RAT_MINI, sx, sy, RAT_PAL)
+        for i in range(0, cw_, 7):  # 창살 (쥐 칸 사이마다)
+            cv.rect(x0 + i, ctop, 1, ch, 136)
+        cv.rect(x0, ctop, cw_, 1, 136)
+        cv.rect(x0, ctop + ch - 1, cw_, 1, 136)
+        cv.rect(x0 - 1, ctop - 1, cw_ + 2, 1, 255)  # 지붕 눈
+        label = "🏆 잡은 쥐 %d" % len(fixed) + (" (+%d)" % (landed - cap) if landed > cap else "")
+        cv.put(x0 + max(0, (cw_ - dw(label)) // 2), max(0, (ctop - 2) // 2), label, 226, 52, True)
+        self.scene_hits.append((x0, x0 + cw_, max(0, (ctop - 2) // 2), (ctop + ch) // 2, lambda: self.open_history()))
+        # 날아가는 쥐: 처치한 자리에서 포물선을 그리며 우리 안 자리로
+        for fx, fy, slot, t in self.flying:
+            k = min(1.0, t / 1.2)
+            tx, ty = self.cage_slot(slot)
+            x = fx + (tx - fx) * k
+            y = fy + (ty - fy) * k - 14 * math.sin(math.pi * k)
+            cv.blit(RAT_MINI, x, y, RAT_PAL)
+
+        # 게시판: SENTRY 위병소 오른쪽 ~ 우리 왼쪽, 지평선 위 하늘에 최근 처리한 쥐들
+        bx0, bx1 = 11, x0 - 2
+        rows = list(range(2, max(2, top // 2 - 1)))
+        if bx1 - bx0 < 24 or len(rows) < 2:
+            return
+        bw = bx1 - bx0
+        cv.put(bx0, rows[0], pad(" 📋 잡은 쥐 게시판 · 클릭하면 기록", bw), 230, 238, True)
+        recent = list(reversed(self.history))[:len(rows) - 1]
+        if not recent:
+            cv.put(bx0, rows[1], pad("  아직 없음 - 병정이 처리하면 여기에 붙는다", bw), 244, 234)
+        for r, row in zip(recent, rows[1:]):
+            tag, col = OUTCOME_TAG[r["outcome"]]
+            if r["mr"]:
+                tag = "✔ !%d" % r["mr"]
+            text = " %s %s %d%s %s" % (pad(tag, 8), pad(r["id"], 10), r["soldier"],
+                                         pad(SOLDIER_NAMES[(r["soldier"] - 1) % len(SOLDIER_NAMES)], 7), r["title"])
+            sel = r["id"] == self.hist_sel
+            cv.put(bx0, row, fit_text(text, bw), col if not sel else 231, 24 if sel else 234, sel)
+            self.scene_hits.append((bx0, bx1, row, row, lambda iid=r["id"]: self.open_history(iid)))
 
     def draw_market(self, cv, top):
         w, gpx, t = self.w, self.gpx, self.t
@@ -1048,13 +1321,37 @@ class World:
             cv.set(cx + dx, star_y + dy, sc)
         cv.rect(cx - 1, tb - 1, 3, 2, 94)
 
-        # 입구: 사탕 지팡이 기둥 두 개 + ENTRY 간판
-        gx, gy = self.gate_x, self.bottom - 5
-        for yy in range(gy - 4, gy + 6):
-            c = 196 if (yy // 2) % 2 else 255
-            cv.set(gx - 1, yy, c)
-            cv.set(gx + 4, yy, c)
-        cv.put(gx - 1, (gy - 5) // 2, "ENTRY", 230, 22, True)
+        # 상점: 줄 맨 앞 손님이 카운터에서 계산하고 가게 안으로 들어간다
+        gx, gy, bottom = self.gate_x, self.bottom - 5, self.bottom
+        sx, sw = gx - 1, w - gx + 1  # 가게 왼쪽 끝 · 폭
+        cv.rect(sx, gy - 6, sw, bottom - gy + 7, 52)  # 안쪽 벽
+        for k, yy in enumerate((gy - 4, gy - 1)):  # 선반 + 상품
+            cv.rect(sx + 1, yy + 1, sw - 2, 1, 94)
+            for i in range(sx + 1, w - 1):
+                if (i + k) % 2 == 0:
+                    cv.set(i, yy, LIGHTS[(i * 3 + k) % len(LIGHTS)])
+        kx = sx + sw // 2  # 산타 모자를 쓴 점원
+        cv.set(kx, gy - 1, 255)
+        cv.rect(kx - 1, gy, 3, 1, 196)
+        cv.rect(kx - 1, gy + 1, 3, 2, 223)
+        cv.set(kx - 1, gy + 1, 16)
+        cv.set(kx + 1, gy + 1, 16)
+        for x, y, pal, st in self.passing:  # 계산 마친 손님 (카운터 뒤로 들어간다)
+            cv.blit(VISITOR[:4] + (VISITOR_STEP if int(st * 6) % 2 else VISITOR[4:]), x, y, pal)
+        cv.rect(sx, gy + 3, sw, bottom - gy - 2, 130)  # 카운터
+        cv.rect(sx, gy + 3, sw, 1, 180)
+        for i in range(sw):  # 줄무늬 차양 + 물결 끝
+            c = 196 if (i // 2) % 2 == 0 else 255
+            cv.rect(sx + i, gy - 9, 1, 3, c)
+            if i % 2 == 0:
+                cv.set(sx + i, gy - 6, c)
+        cv.rect(sx, gy - 6, 1, bottom - gy + 7, 94)  # 기둥
+        cv.rect(w - 1, gy - 6, 1, bottom - gy + 7, 94)
+        sign = "SHOP"
+        cv.rect(sx, gy - 12, sw, 3, 22)  # 간판 판자: 차양 바로 위에 붙인다
+        cv.put(sx + (sw - len(sign)) // 2, (gy - 11) // 2, sign, 226, 22, True)
+        for p in self.particles:
+            cv.set(p[0], p[1], p[4])
 
         # 대기열 (위 줄 먼저 그려 앞줄이 위에 겹친다)
         people = [(self.qpos(p.d), p) for p in self.queue]
@@ -1062,8 +1359,6 @@ class World:
             if x < -3:
                 continue
             cv.blit(VISITOR[:4] + (VISITOR_STEP if p.walking else VISITOR[4:]), x, y, p.pal)
-        for x, y, pal, st in self.passing:
-            cv.blit(VISITOR[:4] + (VISITOR_STEP if int(st * 6) % 2 else VISITOR[4:]), x, y, pal)
         off = self.queue_offscreen()
         if off:
             tail_y = self.qpts[-1][1]
@@ -1165,7 +1460,7 @@ def traffic_card(world, width, height):
     body = [
         [],
         [("  %s" % format(int(world.rps), ","), 231, True), (" rps    ", 245), (label, lcol, True)],
-        [("  입장 대기열 %d명" % len(world.queue), 250),
+        [("  상점 대기열 %d명" % len(world.queue), 250),
          ("  (화면 밖 +%d)" % world.queue_offscreen() if world.queue_offscreen() else "", 203)],
         [("  30초 최고 %s rps" % format(int(peak), ","), 245)],
         [],
@@ -1408,9 +1703,61 @@ def issue_lines(world, w, h):
     lines += [seg_line(world.issue_segs(m), w, 234) for m in shown]
     if len(shown) < len(items):
         lines.append(seg_line([("   … 외 %d건" % (len(items) - len(shown)), 244)], w, 234))
+    # 남는 줄엔 최근에 잡은 쥐가 무슨 버그였는지
+    for r in list(reversed(world.history))[:max(0, h - len(lines))]:
+        tag, col = OUTCOME_TAG[r["outcome"]]
+        if r["mr"]:
+            tag = "✔ MR !%d" % r["mr"]
+        lines.append(seg_line([(" ", 7), (pad(r["id"], 12), 245), (pad(r["kind"], 13), 240),
+                               (pad("%s · %d" % (tag, r["soldier"]), 15), col), (r["title"], 240)], w, 233))
     while len(lines) < h:
         lines.append(seg_line([], w, 234))
     return lines[:h]
+
+
+OUTCOME_TAG = {"fixed": ("✔ MR", 46), "noise": ("✖ noise", 245), "human": ("! 사람", 226)}
+
+
+def history_lines(world, w, n):
+    """잡은 쥐 기록 창 n 줄: 지금까지 병정들이 처리한 Sentry 이슈 (최근 것부터)."""
+    BG = 235
+    hist = world.history
+    cnt = {k: sum(1 for r in hist if r["outcome"] == k) for k in OUTCOME_TAG}
+    per = "  ".join("%d %s %d건" % (s.idx + 1, s.name, sum(1 for r in hist if r["soldier"] == s.idx + 1))
+                    for s in world.soldiers)
+    lines = [seg_line([("  🏆 잡은 쥐 기록 ", 226, True), ("총 %d건 " % len(hist), 231, True),
+                       ("· MR %d · noise %d · 사람 %d" % (cnt["fixed"], cnt["noise"], cnt["human"]), 250),
+                       ("   │ " + per, 117), ("   [r·x·클릭] 닫기", 242)], w, 52)]
+    lines.append(seg_line([(" " + pad("결과", 10) + pad("ID", 12) + pad("판정", 13) + pad("병정", 12) + pad("시각", 7)
+                            + "Sentry 제목", 242)], w, 237))
+    live = [m for m in world.mice if m.state == "held" and m.issue["id"] == world.hist_sel]
+    rows = []
+    for m in live:  # 클릭한 쥐가 아직 처리 중이면 맨 위에
+        s = world.soldiers[m.claimed]
+        rows.append(([(" " + pad("… 처리 중", 10), 117, True), (pad(m.issue["id"], 12), 231, True),
+                      (pad(m.issue["kind"], 13), KIND_COL[m.issue["kind"]]),
+                      (pad("%d %s" % (s.idx + 1, s.name), 12), 117), (pad("지금", 7), 250), (m.issue["title"], 250)], True))
+    for r in reversed(hist):
+        tag, col = OUTCOME_TAG[r["outcome"]]
+        if r["mr"]:
+            tag = "✔ !%d" % r["mr"]
+        mm, ss = divmod(int(r["t"]), 60)
+        sel = r["id"] == world.hist_sel
+        rows.append(([(" " + pad(tag, 10), col, True), (pad(r["id"], 12), 231, sel),
+                      (pad(r["kind"], 13), KIND_COL.get(r["kind"], 250)),
+                      (pad("%d %s" % (r["soldier"], SOLDIER_NAMES[(r["soldier"] - 1) % len(SOLDIER_NAMES)]), 12), 250),
+                      (pad("%02d:%02d" % (mm, ss), 7), 244), (r["title"], 250 if sel else 244)], sel))
+    if not rows:
+        rows.append(([("   아직 잡은 쥐가 없습니다 - 병정이 처리하면 여기에 쌓입니다", 244)], False))
+    room = n - len(lines)
+    # 강조한 줄이 창 밖이면 그 줄이 보이도록
+    first = next((i for i, (_, sel) in enumerate(rows) if sel), 0)
+    start = max(0, first - room + 1)
+    for segs, sel in rows[start:start + room]:
+        lines.append(seg_line(segs, w, 24 if sel else BG))
+    while len(lines) < n:
+        lines.append(seg_line([], w, BG))
+    return lines[:n]
 
 
 def compose(world, w, h, paused=False):
@@ -1434,10 +1781,10 @@ def compose(world, w, h, paused=False):
         label, lcol = world.crowd_label()
         off = world.queue_offscreen()
         lines.append(seg_line([
-            ("  🎄 입장 대기열 ", 250), ("%d명" % len(world.queue), 231, True),
+            ("  🎄 상점 대기열 ", 250), ("%d명" % len(world.queue), 231, True),
             ("  화면 밖 +%d" % off if off else "", 203, True),
             ("  │ ", 240), ("%s rps  " % format(int(world.rps), ","), 231, True), (label, lcol, True),
-            ("  │ 입장 %d명" % world.admitted, 245), ("   (rps가 오르면 줄이 길어진다)", 242)], w, 235))
+            ("  │ 계산 완료 %d명" % world.admitted, 245), ("   (rps가 오르면 줄이 길어진다)", 242)], w, 235))
         lines.append(seg_line([("  트래픽 30초 ", 250), (spark(world.hist, n, world.peak), 51)], w, 234))
         lines += world.draw("traffic").lines()
         keys = "[Esc]메뉴 [0]개요 [2]Sentry [t]트래픽 급증 [space]정지 [q]종료"
@@ -1454,11 +1801,18 @@ def compose(world, w, h, paused=False):
             ("  │ 💂 출동 ", 250), ("%d/%d" % (out, len(world.soldiers)), 117, True),
             ("  │ ⭐ 처치(MR) ", 250), (str(st["fixed"]), 46, True),
             ("  noise %d  block %d" % (st["noise"], st["blocked"]), 245)], w, 235))
+        off = len(lines)
         lines += world.draw("sentry").lines()
+        world.hits += [(x0 + 1, x1 + 1, off + r0 + 1, off + r1 + 1, act) for x0, x1, r0, r1, act in world.scene_hits]
         lines += issue_lines(world, w, list_h)
-        keys = "[Esc]메뉴 [0]개요 [1]트래픽 [b]쥐 떼 [n]쥐 1마리 [h]사람이 처리 [space]정지 [q]종료"
+        keys = "[Esc]메뉴 [0]개요 [1]트래픽 [b]쥐 떼 [n]쥐 1마리 [h]사람이 처리 [r]/쥐 클릭 잡은 쥐 기록 [q]종료"
         cats = ("all", "sentry")
     lines += log_lines(world, w, log_h, cats, keys)
+    if world.show_hist:  # 잡은 쥐 기록 창: 머리줄 아래를 덮는다
+        n = min(h - 3, max(8, h * 2 // 3))
+        lines[1:1 + n] = history_lines(world, w, n)
+        world.hits = [hh for hh in world.hits if hh[2] == 1 or hh[2] > 1 + n]
+        world.hits.append((1, w, 2, 1 + n, lambda: world.open_history()))
     return lines[:h]
 
 
@@ -1537,7 +1891,12 @@ def handle_key(world, ch, state):
         elif ch == "\x1b":
             world.menu_back()
         return
-    if ch in ("\x1b", "m"):
+    if world.show_hist and ch in ("\x1b", "x", "r"):
+        world.show_hist, world.hist_sel = False, None
+        return
+    if ch == "r":
+        world.open_history()
+    elif ch in ("\x1b", "m"):
         world.set_view("menu")
     elif ch == "0":
         world.set_view("overview")
@@ -1793,7 +2152,12 @@ def run_stream(w, h, skip_intro=False):
         if not state["paused"]:
             world.update(dt)
         bridge.write_state(world, state["paused"])
-        out = json.dumps({"cols": w, "blocks": frame_blocks(compose(world, w, h, state["paused"]))},
+        caught = []
+        for r in reversed(world.history):
+            if r["id"] not in caught:
+                caught.append(r["id"])
+        out = json.dumps({"cols": w, "blocks": frame_blocks(compose(world, w, h, state["paused"])),
+                          "caught": caught[:8], "hist": world.show_hist},
                          ensure_ascii=False, separators=(",", ":"))
         if out != last:
             last = out
