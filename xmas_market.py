@@ -1577,6 +1577,10 @@ def compose_intro(world, w, h):
 
     y = top + len(rows) + 2
     if rv >= 1:
+        for k in range(2):  # 부제는 어두운 띠 위에: 눈발이 글자 사이로 지나가지 않게
+            for x in range(w):
+                cv.set(x, 2 * (y + k), 16)
+                cv.set(x, 2 * (y + k) + 1, 16)
         for k, (text, col) in enumerate((("🎄 Ops Christmas Market 🎄", 223),
                                          ("Sentry 쥐를 잡고, 트래픽 광장을 지켜라!", 250))):
             cv.put((w - dw(text)) // 2, y + k, text, col)
@@ -2166,7 +2170,7 @@ def run_stream(w, h, skip_intro=False):
                 sys.stdout.flush()
             except (BrokenPipeError, OSError):
                 return
-        time.sleep(max(0.0, 1.0 / 8 - (time.time() - now)))  # 패널은 초당 8장
+        time.sleep(max(0.0, 1.0 / 15 - (time.time() - now)))  # 패널은 초당 15장 (그리기는 프레임당 3ms 안팎)
 
 
 def main():
