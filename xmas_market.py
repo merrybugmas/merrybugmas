@@ -3,7 +3,8 @@
 """
 Ops Christmas Market — 터미널 메타버스 대시보드 PoC (mock 데이터, 픽셀아트)
 
-  트래픽(Grafana 자리)      → 마켓 방문객 수. 트래픽이 오르면 광장이 북적인다.
+  시작하면 타이틀(MERRY BUGMAS) → 메뉴(서비스·시나리오 고르기) → 스테이지.
+  트래픽(Grafana 자리)      → 입구 앞 대기열. 트래픽이 오르면 줄이 길어진다.
   Sentry 미해결 이슈        → 호두까기 인형의 쥐. 이슈 하나 = 쥐 한 마리.
   sentry-bot 에이전트       → 호두까기 병정. triage → fix → review → MR 로 쥐를 처치한다.
 
@@ -229,6 +230,53 @@ HATS = [196, 196, 255, 94, 130, 16, 178, 33, 28]
 PANTS = [24, 58, 236, 95, 60]
 LIGHTS = [196, 46, 226, 51, 201, 208]
 
+# ------------------------------------------------------------------ 타이틀 · 메뉴
+
+# 5x5 점 글씨 - 꽉 찬 블록(█)만 써서 글꼴이 달라도 폭이 어긋나지 않는다
+FONT = {
+    "M": ["#...#", "##.##", "#.#.#", "#...#", "#...#"],
+    "E": ["#####", "#....", "####.", "#....", "#####"],
+    "R": ["####.", "#...#", "####.", "#..#.", "#...#"],
+    "Y": ["#...#", ".#.#.", "..#..", "..#..", "..#.."],
+    "B": ["####.", "#...#", "####.", "#...#", "####."],
+    "U": ["#...#", "#...#", "#...#", "#...#", ".###."],
+    "G": [".####", "#....", "#.###", "#...#", ".###."],
+    "A": [".###.", "#...#", "#####", "#...#", "#...#"],
+    "S": [".####", "#....", ".###.", "....#", "####."],
+}
+LOGO_COLORS = ([196, 196, 160, 160, 124], [46, 46, 34, 34, 28])  # MERRY 빨강 · BUGMAS 초록 (위→아래)
+INTRO_SNOW, INTRO_REVEAL = 1.6, 1.2  # 초: 눈발이 굵어지는 시간 · 가운데가 걷히며 글씨가 나오는 시간
+
+
+def logo_rows(word, px, gap):
+    """글씨 5줄. px = 점 하나의 가로 칸 수, gap = 글자 사이 칸 수."""
+    return [(" " * gap).join("".join(("█" if c == "#" else " ") * px for c in FONT[ch][r]) for ch in word)
+            for r in range(5)]
+
+
+SERVICES = [
+    # (키 = Sentry 프로젝트 접두사, 이름, 설명, 트래픽 배율, 버그 배율)
+    ("ALL", "전체", "모든 서비스 합산", 1.0, 1.0),
+    ("WEB", "웹 프론트", "메인 · 공고 목록", 0.55, 1.2),
+    ("SEARCH", "검색", "검색 결과 · 자동완성", 0.35, 0.9),
+    ("RESUME", "이력서", "이력서 작성 · 지원", 0.2, 0.7),
+    ("DISPLAY", "전시·광고", "배너 · 추천 영역", 0.3, 0.6),
+    ("MOBILE", "모바일 웹", "m. 도메인 전체", 0.45, 1.4),
+]
+SCENARIOS = [
+    ("traffic", "🎄 트래픽", "광장 입장 대기열",
+     ["방문객이 입구(ENTRY) 앞에 한 줄로 선다.", "rps↑ = 줄이 길어진다. 화면 밖까지 밀리면 인파 경보."]),
+    ("sentry", "🐭 Sentry 버그", "병정의 쥐 사냥",
+     ["Sentry 미해결 이슈 = 쥐. 병정(sentry-bot)이 출동해", "triage → fix → review → MR 로 처치한다."]),
+    ("overview", "📊 개요", "숫자 대시보드",
+     ["트래픽과 Sentry를 숫자·그래프로 한눈에.", "움직이는 장면 없이 1초에 한 번 갱신."]),
+]
+
+
+def stars(v):
+    n = max(1, min(5, int(round(v * 5))))
+    return "★" * n + "☆" * (5 - n)
+
 # ------------------------------------------------------------------ 데이터 소스
 
 ISSUE_CATALOG = [
@@ -266,14 +314,17 @@ class MockSource:
         self.spikes = [sp for sp in self.spikes if t <= sp[0] + sp[2]]
         return max(60.0, v + R.gauss(0, 35))
 
-    def poll_issues(self, t, dt, rps):
-        """새로 생긴 미해결 이슈. 트래픽이 높을수록 자주 생긴다."""
-        lam = 1 / 16.0 + 0.25 * max(0.0, (rps - 1600) / PEAK_RPS)
-        return [self.make_issue()] if R.random() < lam * dt else []
+    def poll_issues(self, t, dt, ratio, bug=1.0, service=None):
+        """새로 생긴 미해결 이슈. 트래픽(ratio = rps / 최고치)이 높을수록 자주 생긴다."""
+        lam = (1 / 16.0 + 0.25 * max(0.0, ratio - 0.53)) * bug
+        return [self.make_issue(service)] if R.random() < lam * dt else []
 
-    def make_issue(self):
+    def make_issue(self, service=None):
+        """service 를 주면 그 서비스(Sentry 프로젝트) 이슈만 만든다."""
         kind = R.choices(list(KIND_WEIGHTS), weights=list(KIND_WEIGHTS.values()))[0]
-        proj, title, _ = R.choice([c for c in ISSUE_CATALOG if c[2] == kind])
+        pool = [c for c in ISSUE_CATALOG if c[2] == kind]
+        proj, title, _ = R.choice([c for c in pool if c[0] == service] or pool)
+        proj = service or proj
         self.seq += R.randint(1, 9)
         return {
             "id": "%s-%s" % (proj, base36(self.seq)),
@@ -294,43 +345,30 @@ def base36(n):
 # ------------------------------------------------------------------ 등장인물 (좌표: x=칸=픽셀, y=픽셀)
 
 
-class Visitor:
-    def __init__(self, world):
-        self.x = -3.0 if R.random() < 0.5 else float(world.w)
-        self.y = R.randint(world.walk_top, world.walk_bot)
-        self.pal = {"H": R.choice(HATS), "S": 223, "C": R.choice(COATS), "P": R.choice(PANTS), "k": 16}
-        self.speed = R.uniform(4, 9)
-        self.target = R.choice(world.targets)
-        self.linger = 0.0
-        self.leaving = False
-        self.gone = False
-        self.step = 0.0
+def visitor_pal():
+    return {"H": R.choice(HATS), "S": 223, "C": R.choice(COATS), "P": R.choice(PANTS), "k": 16}
 
-    def update(self, world, dt):
-        if self.linger > 0:
-            self.linger -= dt
-            return
-        dx = self.target - self.x
-        if abs(dx) < 0.6:
-            if self.leaving:
-                self.gone = True
-            elif R.random() < 0.12:
-                self.leave(world)
-            else:
-                self.linger = R.uniform(1, 4)
-                self.target = R.choice(world.targets) + R.uniform(-3, 3)
-            return
-        self.step += dt
-        self.x += math.copysign(min(abs(dx), self.speed * dt), dx)
 
-    def leave(self, world):
-        self.leaving = True
-        self.linger = 0
-        self.target = -4.0 if self.x < world.w / 2 else world.w + 1.0
+class Queuer:
+    """입장 대기열의 한 사람. d = 맨 앞 자리(입구)에서 줄을 따라 잰 거리(픽셀). 줄 위로만 걷는다."""
+    SPEED = 14.0
+    GAP = 4.0  # 앞사람과의 간격(픽셀)
+
+    def __init__(self, d):
+        self.d = d
+        self.pal = visitor_pal()
+        self.step = R.random()
+        self.moving = False
+
+    def update(self, dt, goal):
+        self.moving = self.d > goal + 0.05
+        if self.moving:
+            self.d -= min(self.d - goal, self.SPEED * dt)
+            self.step += dt
 
     @property
     def walking(self):
-        return self.linger <= 0 and int(self.step * 6) % 2 == 1
+        return self.moving and int(self.step * 6) % 2 == 1
 
 
 class Mouse:
@@ -485,7 +523,9 @@ class World:
         self.src = MockSource()
         self.t = 0.0
         self.w = self.sh = 0
-        self.visitors, self.mice, self.particles = [], [], []
+        self.mice, self.particles = [], []
+        self.queue, self.passing = [], []  # 입장 대기열 · 입구를 지나가는 사람 [x, y, pal, step]
+        self.admit_acc, self.admitted = 0.0, 0
         self.soldiers = []
         self.logs = []
         self.rps = 0.0
@@ -495,10 +535,68 @@ class World:
         self.stats = {"fixed": 0, "noise": 0, "human": 0, "blocked": 0}
         self.auto = True
         self.fired = set()
+        self.phase = "intro"  # intro(타이틀) / menu(스테이지 고르기) / play
+        self.intro_t = 0.0
+        self.tsnow, self.tsize = [], None  # 타이틀·메뉴 화면 눈발
+        self.menu_col, self.svc_i, self.scn_i = 0, 0, 0  # 메뉴 포커스(0 서비스 / 1 시나리오) · 고른 줄
+        self.service = None  # 지금 스테이지의 SERVICES 항목 (시작 전에는 None)
+        self.peak = PEAK_RPS
         self.view = "overview"  # overview(정적 개요) / traffic(광장) / sentry(전투)
         self.unseen = 0  # 광장을 보는 동안 새로 나온 쥐
-        self.hits = []  # 클릭 영역 (x0, x1, y0, y1, view), 1부터 세는 칸 좌표
+        self.hits = []  # 클릭 영역 (x0, x1, y0, y1, 동작), 1부터 세는 칸 좌표
         self.log("크리스마스 마켓 개장! (mock 데이터)", 220, "all")
+
+    @property
+    def svc(self):
+        return self.service or SERVICES[self.svc_i]
+
+    @property
+    def svc_key(self):
+        """Sentry 프로젝트 접두사. 전체면 None."""
+        return None if self.svc[0] == "ALL" else self.svc[0]
+
+    @property
+    def ratio(self):
+        return self.rps / self.peak
+
+    # ---- 스테이지 · 메뉴
+    def start_stage(self, svc_i, view):
+        """서비스를 바꾸면 새 판(쥐·대기열·통계 초기화). 같은 서비스면 화면만 바꾼다."""
+        svc = SERVICES[svc_i]
+        self.svc_i = svc_i
+        if svc is not self.service:
+            self.service, self.peak = svc, PEAK_RPS * svc[3]
+            self.mice, self.queue, self.passing, self.particles = [], [], [], []
+            self.soldiers = [Soldier(i, self) for i in range(3)]
+            self.stats = {"fixed": 0, "noise": 0, "human": 0, "blocked": 0}
+            self.mr, self.admitted, self.admit_acc = 1400, 0, 0.0
+            self.hist, self.ehist, self.spawn_times = [], [], []
+            self.src.spikes, self.fired, self.t, self.logs = [], set(), 0.0, []
+            self.log("STAGE %s %s 시작! (mock 데이터)" % (svc[0], svc[1]), 220, "all")
+        self.phase = "play"
+        self.set_view(view)
+
+    def menu_move(self, d):
+        if self.menu_col == 0:
+            self.svc_i = (self.svc_i + d) % len(SERVICES)
+        else:
+            self.scn_i = (self.scn_i + d) % len(SCENARIOS)
+
+    def menu_enter(self):
+        if self.menu_col == 0:
+            self.menu_col = 1
+        else:
+            self.start_stage(self.svc_i, SCENARIOS[self.scn_i][0])
+
+    def menu_back(self):
+        if self.menu_col == 1:
+            self.menu_col = 0
+        else:
+            self.set_view("intro")
+
+    def find_service(self, key):
+        keys = [s[0].lower() for s in SERVICES]
+        return keys.index(key.lower()) if key.lower() in keys else None
 
     # ---- 레이아웃
     def layout(self, w, sh):
@@ -508,8 +606,22 @@ class World:
         self.gt = max(5, int(sh * 0.42))  # 광장(지면) 시작 칸 행
         self.gpx = 2 * self.gt  # 광장 시작 픽셀 행
         self.bottom = 2 * sh - 1  # 맨 아래 픽셀 행
-        self.walk_top, self.walk_bot = self.gpx + 2, self.bottom - 6
         self.lanes = [self.bottom, self.bottom - 3]
+        # 입장 대기열: 오른쪽 입구에서 왼쪽으로 한 줄, 길면 뱀처럼 접어 올라간다 (줄 수는 홀수라 꼬리는 늘 왼쪽 화면 밖)
+        self.gate_x = w - 9
+        y0 = self.bottom - 5  # 맨 앞 줄 사람의 머리 픽셀 행
+        rows = max(1, (y0 - (self.gpx + 2)) // 7 + 1)
+        rows = min(3, rows if rows % 2 else rows - 1)
+        xl, xr = 3, self.gate_x - 4
+        pts = [(xr, y0)]
+        for r in range(rows):
+            if r:
+                pts.append((pts[-1][0], y0 - 7 * r))
+            pts.append((xl if r % 2 == 0 else xr, y0 - 7 * r))
+        pts.append((-4, pts[-1][1]))
+        self.qpts = pts
+        self.qvis = sum(abs(b[0] - a[0]) + abs(b[1] - a[1]) for a, b in zip(pts, pts[1:]))  # 화면에 보이는 줄 길이
+        self.qcap = int(self.qvis // Queuer.GAP)
         self.tree_cx = w // 2
         self.booths = []
         names = iter(BOOTH_NAMES)
@@ -521,7 +633,6 @@ class World:
                     break
                 self.booths.append((x, name, BOOTH_STRIPES[len(self.booths) % len(BOOTH_STRIPES)]))
                 x += bw + 2
-        self.targets = [x + (len(n) + 4) / 2.0 for x, n, _ in self.booths] + [w / 2.0]
         self.snow = [[R.uniform(0, w), R.uniform(0, self.gpx), R.uniform(3, 7), R.uniform(-1.5, 1.5)]
                      for _ in range(w * self.gt // 10)]
         self.stars = [(R.randrange(w), R.randrange(4, max(5, self.gpx - 10))) for _ in range(w // 4)]
@@ -529,8 +640,6 @@ class World:
                            for _ in range(w * (sh - self.gt) // 6)}
         if not self.soldiers:
             self.soldiers = [Soldier(i, self) for i in range(3)]
-        for v in self.visitors:
-            v.y = min(max(v.y, self.walk_top), self.walk_bot)
         for m in self.mice:
             m.y = self.lanes[0] if m.y % 2 == self.lanes[0] % 2 else self.lanes[1]
 
@@ -550,7 +659,7 @@ class World:
     def spawn_mouse(self, issue=None):
         if sum(1 for m in self.mice if m.state != "dead") >= 16:
             return
-        issue = issue or self.src.make_issue()
+        issue = issue or self.src.make_issue(self.svc_key)
         self.mice.append(Mouse(self, issue))
         if self.view == "traffic":
             self.unseen += 1
@@ -573,13 +682,74 @@ class World:
         self.log("담당자가 우리 속 쥐 %d마리 처리 완료" % len(caged), 159)
 
     def set_view(self, v):
-        if v in ("overview", "traffic", "sentry"):
+        if v == "menu":
+            self.phase = "menu"
+        elif v == "intro":
+            self.phase, self.intro_t = "intro", 0.0
+        elif v in ("overview", "traffic", "sentry"):
+            if self.service is None:  # 메뉴를 거치지 않고 바로 화면을 부르면 지금 고른 서비스로 시작
+                self.start_stage(self.svc_i, v)
+                return
+            self.phase = "play"
             self.view = v
             if v != "traffic":
                 self.unseen = 0
 
+    # ---- 입장 대기열 (트래픽)
+    def qpos(self, d):
+        """줄을 따라 맨 앞에서 d 픽셀 떨어진 자리의 (x, 머리 y). 보이는 줄보다 멀면 왼쪽 화면 밖으로 이어진다."""
+        pts = self.qpts
+        for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+            seg = abs(x1 - x0) + abs(y1 - y0)
+            if d <= seg:
+                f = d / seg if seg else 0.0
+                return x0 + (x1 - x0) * f, y0 + (y1 - y0) * f
+            d -= seg
+        x, y = pts[-1]
+        return x - d, y
+
+    def queue_target(self):
+        """트래픽에 맞는 줄 길이. 최고치(peak) 근처면 화면을 넘친다."""
+        return 2 + int(self.qcap * 1.1 * min(1.3, self.ratio) ** 1.4)
+
+    def queue_offscreen(self):
+        return sum(1 for p in self.queue if p.d > self.qvis - 1)
+
+    def update_queue(self, dt):
+        target, n = self.queue_target(), len(self.queue)
+        if not n and not self.admitted:  # 스테이지 첫 프레임: 줄을 미리 세워 둔다
+            self.queue = [Queuer(Queuer.GAP * i) for i in range(target)]
+            n = target
+        # 입구는 늘 사람을 들이고(줄이 움직이도록), 줄이 목표보다 길면 더 빨리 들인다
+        mu = min(3.5, 1.2 + 0.15 * max(0, n - target))
+        lam = 1.2 + 1.5 * max(0, target - n) if n < target + 3 else 0.2
+        if R.random() < lam * dt:
+            self.queue.append(Queuer(max(self.qvis + 6, Queuer.GAP * n + 4)))
+        self.admit_acc = min(1.0, self.admit_acc + mu * dt)
+        if self.queue and self.admit_acc >= 1.0 and self.queue[0].d < 0.5:
+            p = self.queue.pop(0)
+            x, y = self.qpos(0)
+            self.passing.append([x, y, p.pal, 0.0])
+            self.admit_acc = 0.0
+            self.admitted += 1
+        for i, p in enumerate(self.queue):
+            p.update(dt, Queuer.GAP * i)
+        for p in self.passing:
+            p[0] += 12 * dt
+            p[3] += dt
+        self.passing = [p for p in self.passing if p[0] < self.w + 2]
+
     # ---- 갱신
     def update(self, dt):
+        if self.phase != "play":  # 타이틀·메뉴: 눈발만 움직인다
+            self.intro_t += dt
+            if self.tsize:
+                for f in self.tsnow:
+                    f[1] += f[2] * dt
+                    f[0] += f[3] * dt + 0.6 * math.sin(self.intro_t * 1.5 + f[2]) * dt
+                    if f[1] >= 2 * self.tsize[1]:
+                        f[0], f[1] = R.uniform(0, self.tsize[0]), 0.0
+            return
         if not self.w:  # 첫 compose()가 layout을 잡기 전
             return
         self.t += dt
@@ -590,8 +760,8 @@ class World:
                     self.fired.add((cyc, name))
                     fn()
 
-        self.rps = self.src.rps(self.t)
-        for issue in self.src.poll_issues(self.t, dt, self.rps):
+        self.rps = self.src.rps(self.t) * self.svc[3]
+        for issue in self.src.poll_issues(self.t, dt, self.ratio, self.svc[4], self.svc_key):
             self.log("Sentry 신규 이슈 %s: %s" % (issue["id"], issue["title"][:40]), 203)
             self.spawn_mouse(issue)
 
@@ -602,17 +772,7 @@ class World:
             self.hist = (self.hist + [self.rps])[-60:]
             self.ehist = (self.ehist + [len(self.spawn_times)])[-60:]
 
-        # 방문객 수 = 트래픽
-        cap = max(10, int(self.w * 0.85))
-        want = 3 + int((cap - 3) * min(1.0, self.rps / PEAK_RPS))
-        staying = [v for v in self.visitors if not v.leaving]
-        if len(staying) < want and R.random() < 8 * dt:
-            self.visitors.append(Visitor(self))
-        elif len(staying) > want and R.random() < 5 * dt:
-            R.choice(staying).leave(self)
-        for v in self.visitors:
-            v.update(self, dt)
-        self.visitors = [v for v in self.visitors if not v.gone]
+        self.update_queue(dt)  # 대기열 길이 = 트래픽
 
         for m in self.mice:
             m.update(self, dt)
@@ -664,6 +824,14 @@ class World:
                 self.log("채팅 지시: %s 쥐를 찾지 못함" % arg, 245)
         elif op == "view":
             self.set_view({"0": "overview", "1": "traffic", "2": "sentry"}.get(arg, arg.lower()))
+        elif op in ("start", "stage", "service"):
+            a = arg.split()
+            idx = self.find_service(a[0]) if a else self.svc_i
+            scn = a[1].lower() if len(a) > 1 else (self.view if self.phase == "play" else "sentry")
+            if idx is None or scn not in ("overview", "traffic", "sentry"):
+                self.log("채팅 지시: 서비스/화면을 모름 (%s)" % arg[:30], 245, "all")
+            else:
+                self.start_stage(idx, scn)
         elif op == "say":
             self.log("💬 codex: " + arg, 183, "all")
         else:
@@ -673,7 +841,11 @@ class World:
         label, _ = self.crowd_label()
         return {
             "t": round(self.t, 1),
-            "traffic": {"rps": int(self.rps), "visitors": len(self.visitors), "crowd": label,
+            "phase": self.phase,
+            "service": self.svc[0] if self.service else None,
+            "traffic": {"rps": int(self.rps), "peak_rps": int(self.peak), "queue": len(self.queue),
+                        "queue_offscreen": self.queue_offscreen() if self.w else 0,
+                        "admitted": self.admitted, "crowd": label,
                         "history_rps": [int(v) for v in self.hist[-20:]]},
             "mice": [{"id": m.issue["id"], "title": m.issue["title"], "kind": m.issue["kind"],
                       "state": m.state, "chasedBy": None if m.claimed is None else m.claimed + 1}
@@ -688,12 +860,12 @@ class World:
 
     # ---- 그리기
     def crowd_label(self):
-        r = self.rps
-        if r < 600:
+        r = self.ratio
+        if r < 0.2:
             return "한산함", 250
-        if r < 1300:
+        if r < 0.43:
             return "활기참", 120
-        if r < 2200:
+        if r < 0.73:
             return "북적북적", 214
         return "인파 경보!", 196
 
@@ -721,7 +893,7 @@ class World:
                 (pad(m.issue["kind"], 13), KIND_COL[m.issue["kind"]]), (pad(st, 15), sc), (m.issue["title"], 244)]
 
     def draw(self, view="traffic"):
-        market, bugs = view != "sentry", view != "traffic"
+        market, bugs = view == "traffic", view == "sentry"
         w, sh, t = self.w, self.sh, self.t
         gpx, bottom = self.gpx, self.bottom
         cv = PixelCanvas(w, sh)
@@ -739,10 +911,10 @@ class World:
         for x, y in self.stars:
             if (x * 7 + y + int(t * 2)) % 9:
                 cv.set(x, y, 229 if (x + y) % 3 else 255)
-        for f in self.snow if market else ():
+        for f in self.snow:
             cv.set(f[0], f[1], 255 if f[2] > 5 else 252)
         # 전구 가랜드 (처지는 줄 + 반짝이는 전구)
-        for x in range(w if market else 0):
+        for x in range(w):
             sag = 1 if x % 8 in (3, 4, 5) else 0
             cv.set(x, 1 + sag, 22)
             if x % 8 == 4:
@@ -762,24 +934,11 @@ class World:
         if market:
             self.draw_market(cv, top)
         if bugs:
-            self.draw_bugs(cv, top, table=not market)
+            self.draw_bugs(cv, top)
         return cv
 
-    def draw_bugs(self, cv, top, table):
+    def draw_bugs(self, cv, top):
         w, gpx, bottom = self.w, self.gpx, self.bottom
-        if table:  # 하늘 자리에 이슈 목록
-            n = max(2, top // 2)
-            tw = w - 16
-            items = self.live_issues()
-            put_segs(cv, 2, 0, fit([(ISSUE_HEADER, 242)], tw), 234)
-            if not items:
-                put_segs(cv, 2, 1, fit([("   쥐 없음 - 병정은 위병소에서 대기 중", 46)], tw), 234)
-            shown = items if len(items) <= n - 1 else items[:n - 2]
-            for i, m in enumerate(shown):
-                put_segs(cv, 2, 1 + i, fit(self.issue_segs(m), tw), 234)
-            if len(shown) < len(items):
-                put_segs(cv, 2, n - 1, fit([("   … 외 %d건" % (len(items) - len(shown)), 244)], tw), 234)
-
         # 위병소 (SENTRY box)
         bx = 1
         cv.rect(bx + 1, top, 6, 1, 255)
@@ -889,10 +1048,26 @@ class World:
             cv.set(cx + dx, star_y + dy, sc)
         cv.rect(cx - 1, tb - 1, 3, 2, 94)
 
-        # 방문객 (뒤에 선 사람부터)
-        for v in sorted(self.visitors, key=lambda v: v.y):
-            spr = VISITOR[:4] + (VISITOR_STEP if v.walking else VISITOR[4:])
-            cv.blit(spr, v.x, v.y, v.pal)
+        # 입구: 사탕 지팡이 기둥 두 개 + ENTRY 간판
+        gx, gy = self.gate_x, self.bottom - 5
+        for yy in range(gy - 4, gy + 6):
+            c = 196 if (yy // 2) % 2 else 255
+            cv.set(gx - 1, yy, c)
+            cv.set(gx + 4, yy, c)
+        cv.put(gx - 1, (gy - 5) // 2, "ENTRY", 230, 22, True)
+
+        # 대기열 (위 줄 먼저 그려 앞줄이 위에 겹친다)
+        people = [(self.qpos(p.d), p) for p in self.queue]
+        for (x, y), p in sorted(people, key=lambda e: e[0][1]):
+            if x < -3:
+                continue
+            cv.blit(VISITOR[:4] + (VISITOR_STEP if p.walking else VISITOR[4:]), x, y, p.pal)
+        for x, y, pal, st in self.passing:
+            cv.blit(VISITOR[:4] + (VISITOR_STEP if int(st * 6) % 2 else VISITOR[4:]), x, y, pal)
+        off = self.queue_offscreen()
+        if off:
+            tail_y = self.qpts[-1][1]
+            cv.put(0, tail_y // 2 - 1, "◀ +%d명" % off, 231, 160, True)
 
 
 # ------------------------------------------------------------------ 화면 구성
@@ -926,11 +1101,15 @@ VIEWS = [("overview", "0 개요"), ("traffic", "1 🎄 트래픽"), ("sentry", "
 
 def header(world, w, paused):
     """맨 윗줄: 제목 + 탭(클릭 가능). 탭 위치를 world.hits 에 기록한다."""
-    title = [("  🎄 OPS CHRISTMAS MARKET  " if w >= 100 else " 🎄 OPS ", 226, True)]
+    title = [("  🎄 MERRY BUGMAS " if w >= 100 else " 🎄 ", 226, True), (" %s " % world.svc[0], 16, True, 223), ("  ", 7)]
     segs, x = list(title), seg_width(title) + 1
     label, _ = world.crowd_label()
     blink = int(world.t * 2) % 2
     live = sum(1 for m in world.mice if m.state in ("roam", "held"))
+    menu = " ◀ 메뉴 "
+    segs += [(menu, 230, False, 88), (" ", 7)]
+    world.hits.append((x, x + dw(menu) - 1, 1, 1, lambda: world.set_view("menu")))
+    x += dw(menu) + 1
     for v, name in VIEWS:
         text = " %s " % name
         if v == "sentry":
@@ -942,7 +1121,7 @@ def header(world, w, paused):
         else:
             st = (230, False, 238)
         segs.append((text, st[0], st[1], st[2]))
-        world.hits.append((x, x + dw(text) - 1, 1, 1, v))
+        world.hits.append((x, x + dw(text) - 1, 1, 1, lambda v=v: world.set_view(v)))
         x += dw(text)
         segs.append((" ", 7))
         x += 1
@@ -986,15 +1165,16 @@ def traffic_card(world, width, height):
     body = [
         [],
         [("  %s" % format(int(world.rps), ","), 231, True), (" rps    ", 245), (label, lcol, True)],
-        [("  방문객 %d명" % len(world.visitors), 250)],
+        [("  입장 대기열 %d명" % len(world.queue), 250),
+         ("  (화면 밖 +%d)" % world.queue_offscreen() if world.queue_offscreen() else "", 203)],
         [("  30초 최고 %s rps" % format(int(peak), ","), 245)],
         [],
     ]
     rows = max(2, min(12, height - 2 - len(body) - 2))
-    body += [[("  " + r, 51)] for r in bars(world.hist, iw - 4, PEAK_RPS, rows)]
-    body.append([("  " + pad("최근 30초", iw - 15) + "max 3,000", 242)])
+    body += [[("  " + r, 51)] for r in bars(world.hist, iw - 4, world.peak, rows)]
+    body.append([("  " + pad("최근 30초", iw - 15) + "max " + format(int(world.peak), ","), 242)])
     title = [("1  🎄 트래픽", 231, True), (" · Grafana", 245)]
-    return card(width, height, title, "클릭 ▸ 광장", body, 196 if alert else 37)
+    return card(width, height, title, "클릭 ▸ 대기열", body, 196 if alert else 37)
 
 
 def sentry_card(world, width, height):
@@ -1035,14 +1215,202 @@ def compose_overview(world, w, h, paused):
         L, Rr = traffic_card(world, lw, bh), sentry_card(world, rw, bh)
         for a, b in zip(L, Rr):
             lines.append(seg_line([(" ", 7)] + a + [(" ", 7)] + b, w, 233))
-        world.hits += [(2, 1 + lw, 2, 1 + bh, "traffic"), (3 + lw, 2 + lw + rw, 2, 1 + bh, "sentry")]
+        world.hits += [(2, 1 + lw, 2, 1 + bh, lambda: world.set_view("traffic")),
+                       (3 + lw, 2 + lw + rw, 2, 1 + bh, lambda: world.set_view("sentry"))]
     else:
         th = max(8, bh * 2 // 5)
         for row in traffic_card(world, w - 2, th) + sentry_card(world, w - 2, bh - th):
             lines.append(seg_line([(" ", 7)] + row, w, 233))
-        world.hits += [(1, w, 2, 1 + th, "traffic"), (1, w, 2 + th, 1 + bh, "sentry")]
-    keys = "[1]/클릭 트래픽 [2]/클릭 Sentry [t]급증 [b]쥐 떼 [space]정지 [q]종료"
+        world.hits += [(1, w, 2, 1 + th, lambda: world.set_view("traffic")),
+                       (1, w, 2 + th, 1 + bh, lambda: world.set_view("sentry"))]
+    keys = "[Esc]메뉴 [1]/클릭 트래픽 [2]/클릭 Sentry [t]급증 [b]쥐 떼 [space]정지 [q]종료"
     return lines + log_lines(world, w, LOG_H, ("all", "traffic", "sentry"), keys)
+
+
+def title_canvas(world, w, h, density=1.0):
+    """타이틀·메뉴 배경: 밤하늘 + 눈발 + 전구 가랜드 + 아래 눈밭(6px)."""
+    if world.tsize != (w, h):
+        world.tsize = (w, h)
+        world.tsnow = [[R.uniform(0, w), R.uniform(0, 2 * h), R.uniform(3, 8), R.uniform(-1.5, 1.5)]
+                       for _ in range(w * h // 6)]
+    cv = PixelCanvas(w, h)
+    H = 2 * h
+    ground = H - 6
+    for y in range(H):
+        c = 17 if y < H * 0.55 else 18
+        if y >= ground:
+            c = 255 if y == ground else 254
+        cv.px[y] = [c] * w
+    for f in world.tsnow[:int(len(world.tsnow) * density)]:
+        if f[1] < ground:
+            cv.set(f[0], f[1], 255 if f[2] > 5 else 252)
+    t = world.intro_t
+    for x in range(w):
+        cv.set(x, 1 + (1 if x % 8 in (3, 4, 5) else 0), 22)
+        if x % 8 == 4:
+            cv.set(x, 3, LIGHTS[(x // 8 + int(t * 2)) % len(LIGHTS)])
+    return cv, ground
+
+
+def compose_intro(world, w, h):
+    """게임 타이틀: 눈발이 점점 굵어지다가 가운데가 걷히며 MERRY BUGMAS 가 나온다. 아래에선 병정이 쥐를 쫓는다."""
+    t = world.intro_t
+    cv, ground = title_canvas(world, w, h, 1.0 if t >= INTRO_SNOW else (t / INTRO_SNOW) ** 2)
+    H = 2 * h
+
+    px = 2 if w >= 76 else 1
+    rows = logo_rows("MERRY", px, px) + [""] + logo_rows("BUGMAS", px, px)
+    colors = LOGO_COLORS[0] + [0] + LOGO_COLORS[1]
+    lw = max(len(r) for r in rows)
+    top = max(1, (h - 8 - len(rows)) // 2)
+    rv = (t - INTRO_SNOW) / INTRO_REVEAL  # 0 → 1: 가운데부터 좌우로 걷힌다
+    if rv > 0:
+        cx, half = w / 2.0, lw / 2.0 + 3
+        opened = [x for x in range(w) if abs(x - cx) <= min(1.0, rv) * half]
+        for y in range(2 * (top - 1), 2 * (top + len(rows) + 1)):
+            for x in opened:
+                cv.set(x, y, 16)
+        for i, row in enumerate(rows):
+            left = (w - len(row)) // 2
+            for j, ch in enumerate(row):
+                if ch == " " or abs(left + j - cx) > min(1.0, rv) * half:
+                    continue
+                col = 231 if rv < 1 else colors[i]
+                if rv >= 1 and (j * 7 + i * 13 + int(t * 5)) % 41 == 0:  # 반짝
+                    col = 226
+                cv.put(left + j, top + i, ch, col, 16)
+
+    y = top + len(rows) + 2
+    if rv >= 1:
+        for k, (text, col) in enumerate((("🎄 Ops Christmas Market 🎄", 223),
+                                         ("Sentry 쥐를 잡고, 트래픽 광장을 지켜라!", 250))):
+            cv.put((w - dw(text)) // 2, y + k, text, col)
+        if int(t * 2) % 2 == 0:
+            press = "▶  PRESS ENTER  ◀"
+            cv.put((w - dw(press)) // 2, y + 3, press, 226, None, True)
+
+    # 아래 눈밭: 쥐가 도망가고 병정이 쫓는다
+    mx = (t * 16) % (w + 40) - 20
+    cv.blit(RAT_WALK[int(t * 8) % 2], mx, H - 7, RAT_PAL)
+    spr = SOLDIER[:12] + (SOLDIER_STEP if int(t * 8) % 2 else SOLDIER[12:])
+    cv.blit(spr, mx - 13, H - 16, SOLDIER_PAL)
+    foot = " Enter 시작 · q 종료 · mock 데이터 PoC "
+    cv.put(w - dw(foot) - 1, h - 1, foot, 244, 254)
+    world.hits.append((1, w, 1, h, lambda: world.set_view("menu")))
+    return cv.lines()
+
+
+def hl(segs, width, bg):
+    """줄 전체를 bg 로 칠한 seg 목록."""
+    out = [(s[0], s[1], len(s) > 2 and s[2], bg) for s in fit(segs, width)]
+    return out
+
+
+def compose_menu(world, w, h):
+    """스테이지 고르기: ① 서비스 → ② 시나리오 → START."""
+    BG = 17
+    blink = int(world.intro_t * 2) % 2
+    lines = [seg_line([("  🎄 MERRY BUGMAS ", 226, True), (" ·  SELECT STAGE", 223)], w, 52)]
+    if h >= 30 and w >= 72:  # 작은 로고
+        m, b = logo_rows("MERRY", 1, 1), logo_rows("BUGMAS", 1, 1)
+        left = (w - len(m[0]) - 3 - len(b[0])) // 2
+        lines.append(seg_line([], w, BG))
+        for i in range(5):
+            lines.append(seg_line([(" " * left, 7), (m[i], LOGO_COLORS[0][i]), ("   ", 7), (b[i], LOGO_COLORS[1][i])], w, BG))
+    lines.append(seg_line([], w, BG))
+
+    svc, scn = SERVICES[world.svc_i], SCENARIOS[world.scn_i]
+    side = w >= 96
+    lw = (w - 3) // 2 if side else w - 2
+    rw = w - 3 - lw if side else w - 2
+    focus = (220, 240) if world.menu_col == 0 else (240, 220)
+
+    def pick_row(sel, focused, segs, width):
+        mark = [("▶ " if sel else "  ", 226, True)]
+        return hl(mark + segs, width, 24) if sel and focused else mark + segs
+
+    # ① 서비스
+    lbody, lhits = [[]], []
+    for i, s in enumerate(SERVICES):
+        sel = i == world.svc_i
+        lhits.append((len(lbody), i))
+        lbody.append(pick_row(sel, world.menu_col == 0, [
+            (pad(s[0], 9), 231 if sel else 250, sel), (pad(s[1], 11), 223 if sel else 245),
+            ("🎄", 7), (stars(s[3]), 214), ("  🐭", 7), (stars(s[4] / 1.4), 203)], lw - 4))
+    if side:
+        lbody += [[], [("  %s · %s" % (svc[1], svc[2]), 250)], [("  🎄 트래픽 규모  🐭 버그 빈도", 242)]]
+    else:  # 위아래로 쌓는 좁은 화면: 설명 줄을 빼서 START 까지 들어가게
+        lbody, lhits = lbody[1:], [(k - 1, i) for k, i in lhits]
+
+    # ② 시나리오
+    rbody, rhits = ([[]] if side else []), []
+    for j, c in enumerate(SCENARIOS):
+        sel = j == world.scn_i
+        rhits.append((len(rbody), j))
+        rbody.append(pick_row(sel, world.menu_col == 1, [
+            (pad(c[1], 17), 231 if sel else 250, sel), (c[2], 223 if sel else 245)], rw - 4))
+    rbody.append([])
+    rbody += [[("  " + d, 250)] for d in scn[3]]
+    rbody.append([])
+    start_row = len(rbody)
+    on = world.menu_col == 1
+    rbody.append([("  ", 7), (" ▶ START  %s · %s " % (svc[0], scn[1]), 16 if on else 250, True,
+                              (226 if blink else 220) if on else 238)])
+
+    L = card(lw, len(lbody) + 2, [("① 서비스", 231, True)], "↑↓  Enter", lbody, focus[0])
+    Rr = card(rw, len(rbody) + 2, [("② 시나리오", 231, True)], "Enter 시작", rbody, focus[1])
+    y0 = len(lines) + 1  # 카드 첫 줄의 화면 행(1부터)
+
+    def pick_svc(i):
+        world.svc_i, world.menu_col = i, 1
+
+    def pick_scn(j):
+        world.scn_i, world.menu_col = j, 1
+        world.menu_enter()
+
+    if side:
+        rows = max(len(L), len(Rr))
+        L += [[]] * (rows - len(L))
+        Rr += [[]] * (rows - len(Rr))
+        for a, b in zip(L, Rr):
+            lines.append(seg_line([(" ", 7)] + fit(a, lw) + [(" ", 7)] + b, w, BG))
+        lx, rx, ry0 = (2, 1 + lw), (3 + lw, 2 + lw + rw), y0
+    else:
+        for row in L + Rr:
+            lines.append(seg_line([(" ", 7)] + row, w, BG))
+        lx = rx = (2, 1 + lw)
+        ry0 = y0 + len(L)
+    for k, i in lhits:
+        world.hits.append((lx[0], lx[1], y0 + 1 + k, y0 + 1 + k, lambda i=i: pick_svc(i)))
+    for k, j in rhits:
+        world.hits.append((rx[0], rx[1], ry0 + 1 + k, ry0 + 1 + k, lambda j=j: pick_scn(j)))
+    world.hits.append((rx[0], rx[1], ry0 + 1 + start_row, ry0 + 1 + start_row,
+                       lambda: world.start_stage(world.svc_i, SCENARIOS[world.scn_i][0])))
+
+    keys = "  [↑↓] 고르기  [←→·Tab] 서비스↔시나리오  [Enter] 다음/시작  [Esc] 뒤로  [q] 종료"
+    gap = (h - 1 - len(lines)) // 2  # 가운데 맞춤: 제목 줄 아래에 빈 줄을 끼운다
+    if gap > 0:
+        lines[1:1] = [seg_line([], w, BG)] * gap
+        world.hits = [(a, b, c + gap, d + gap, f) for a, b, c, d, f in world.hits]
+    while len(lines) < h - 1:
+        lines.append(seg_line([], w, BG))
+    return lines[:h - 1] + [seg_line([(keys, 244)], w, 238)]
+
+
+def issue_lines(world, w, h):
+    """전투 장면 아래 이슈 목록."""
+    items = world.live_issues()
+    lines = [seg_line([(ISSUE_HEADER, 242)], w, 236)]
+    room = h - 1
+    if not items:
+        lines.append(seg_line([("   쥐 없음 - 병정은 위병소에서 대기 중", 46)], w, 234))
+    shown = items if len(items) <= room else items[:room - 1]
+    lines += [seg_line(world.issue_segs(m), w, 234) for m in shown]
+    if len(shown) < len(items):
+        lines.append(seg_line([("   … 외 %d건" % (len(items) - len(shown)), 244)], w, 234))
+    while len(lines) < h:
+        lines.append(seg_line([], w, 234))
+    return lines[:h]
 
 
 def compose(world, w, h, paused=False):
@@ -1050,37 +1418,47 @@ def compose(world, w, h, paused=False):
     if w < 60 or h < 22:
         msg = "60x22 이상 필요 (현재 %dx%d)" % (w, h)
         return [seg_line([(msg, 231)], w, 52)] + [" " * w] * (h - 1)
-    sh = h - 3 - LOG_H
-    world.layout(w, sh)
+    if world.phase == "intro":
+        return compose_intro(world, w, h)
+    if world.phase == "menu":
+        return compose_menu(world, w, h)
+    log_h = LOG_H if h >= 28 else 4
     if world.view == "overview":
+        world.layout(w, h - 3 - LOG_H)
         return compose_overview(world, w, h, paused)[:h]
 
     lines = [header(world, w, paused)]
     n = max(10, w - 24)
     if world.view == "traffic":
+        world.layout(w, h - 3 - log_h)
         label, lcol = world.crowd_label()
+        off = world.queue_offscreen()
         lines.append(seg_line([
-            ("  방문객 ", 250), ("%5s" % format(int(world.rps), ","), 231, True),
-            (" rps  %d명  " % len(world.visitors), 245), (label, lcol, True),
-            ("   (rps가 오르면 광장이 붐빈다)", 242)], w, 235))
-        lines.append(seg_line([("  트래픽 30초 ", 250), (spark(world.hist, n, PEAK_RPS), 51)], w, 234))
-        keys = "[0/Esc]개요 [2]Sentry [t]트래픽 급증 [space]정지 [q]종료"
+            ("  🎄 입장 대기열 ", 250), ("%d명" % len(world.queue), 231, True),
+            ("  화면 밖 +%d" % off if off else "", 203, True),
+            ("  │ ", 240), ("%s rps  " % format(int(world.rps), ","), 231, True), (label, lcol, True),
+            ("  │ 입장 %d명" % world.admitted, 245), ("   (rps가 오르면 줄이 길어진다)", 242)], w, 235))
+        lines.append(seg_line([("  트래픽 30초 ", 250), (spark(world.hist, n, world.peak), 51)], w, 234))
+        lines += world.draw("traffic").lines()
+        keys = "[Esc]메뉴 [0]개요 [2]Sentry [t]트래픽 급증 [space]정지 [q]종료"
         cats = ("all", "traffic")
     else:
+        list_h = 6 if h >= 30 else 4
+        world.layout(w, h - 2 - list_h - log_h)
         live = [m for m in world.mice if m.state in ("roam", "held")]
         caged = sum(1 for m in world.mice if m.state == "caged")
         out = sum(1 for s in world.soldiers if s.busy)
         st = world.stats
         lines.append(seg_line([
-            ("  🐭 쥐 ", 250), (str(len(live)), 203, True), (" 우리 %d" % caged, 226),
-            ("  | 💂 출동 ", 250), ("%d/%d" % (out, len(world.soldiers)), 117, True),
-            ("  | MR ", 250), (str(st["fixed"]), 46, True),
+            ("  🐭 남은 쥐 ", 250), (str(len(live)), 203, True), ("  우리 %d" % caged, 226),
+            ("  │ 💂 출동 ", 250), ("%d/%d" % (out, len(world.soldiers)), 117, True),
+            ("  │ ⭐ 처치(MR) ", 250), (str(st["fixed"]), 46, True),
             ("  noise %d  block %d" % (st["noise"], st["blocked"]), 245)], w, 235))
-        lines.append(seg_line([("  신규 쥐 20초 ", 250), (spark(world.ehist, n, 8), 203)], w, 234))
-        keys = "[0/Esc]개요 [1]트래픽 [b]쥐 떼 [n]쥐 1마리 [h]사람이 처리 [space]정지 [q]종료"
+        lines += world.draw("sentry").lines()
+        lines += issue_lines(world, w, list_h)
+        keys = "[Esc]메뉴 [0]개요 [1]트래픽 [b]쥐 떼 [n]쥐 1마리 [h]사람이 처리 [space]정지 [q]종료"
         cats = ("all", "sentry")
-    lines += world.draw(world.view).lines()
-    lines += log_lines(world, w, LOG_H, cats, keys)
+    lines += log_lines(world, w, log_h, cats, keys)
     return lines[:h]
 
 
@@ -1117,7 +1495,7 @@ class Bridge:
 
     def write_state(self, world, paused):
         now = time.time()
-        if now - self.last < 1.0 or not world.w:
+        if now - self.last < 1.0:
             return
         self.last = now
         st = world.snapshot_state()
@@ -1135,16 +1513,39 @@ ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 
 def handle_key(world, ch, state):
+    """ch 는 글자 하나 또는 방향키 이름(up/down/left/right)."""
     ch = ch.lower()
-    if ch in ("0", "\x1b"):
+    if ch == "q":
+        state["quit"] = True
+        return
+    if world.phase == "intro":  # 아무 키나 누르면 메뉴로
+        world.set_view("menu")
+        return
+    if world.phase == "menu":
+        if ch in ("up", "k", "w"):
+            world.menu_move(-1)
+        elif ch in ("down", "j", "s"):
+            world.menu_move(1)
+        elif ch == "left":
+            world.menu_col = 0
+        elif ch == "right":
+            world.menu_col = 1
+        elif ch == "\t":
+            world.menu_col = 1 - world.menu_col
+        elif ch in ("\r", "\n", " "):
+            world.menu_enter()
+        elif ch == "\x1b":
+            world.menu_back()
+        return
+    if ch in ("\x1b", "m"):
+        world.set_view("menu")
+    elif ch == "0":
         world.set_view("overview")
     elif ch in ("1", "2"):
         world.set_view("traffic" if ch == "1" else "sentry")
     elif ch == "\t":
         order = [v for v, _ in VIEWS]
         world.set_view(order[(order.index(world.view) + 1) % len(order)])
-    elif ch == "q":
-        state["quit"] = True
     elif ch == " ":
         state["paused"] = not state["paused"]
     elif ch == "t":
@@ -1163,6 +1564,7 @@ def handle_key(world, ch, state):
 
 MOUSE = re.compile(r"\x1b\[<(\d+);(\d+);(\d+)([Mm])")
 CSI = re.compile(r"\x1b\[[0-9;?<]*[A-Za-z~]")
+ARROWS = {"A": "up", "B": "down", "C": "right", "D": "left"}
 
 
 def handle_input(world, buf, state):
@@ -1177,15 +1579,23 @@ def handle_input(world, buf, state):
         if m:
             b, x, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
             if m.group(4) == "M" and b == 0:  # 왼쪽 클릭
-                for x0, x1, y0, y1, v in world.hits:
+                for x0, x1, y0, y1, action in list(world.hits):
                     if x0 <= x <= x1 and y0 <= y <= y1:
-                        world.set_view(v)
+                        action()
                         break
             i = m.end()
             continue
         c = CSI.match(buf, i)
         if c:
+            seq = c.group(0)
+            if len(seq) == 3 and seq[2] in ARROWS:  # 방향키 ESC [ A
+                handle_key(world, ARROWS[seq[2]], state)
             i = c.end()
+            continue
+        if buf[i:i + 2] == "\x1bO" and i + 2 < len(buf):  # 방향키 (application 모드) ESC O A
+            if buf[i + 2] in ARROWS:
+                handle_key(world, ARROWS[buf[i + 2]], state)
+            i += 3
             continue
         if i == len(buf) - 1:  # Esc 단독
             handle_key(world, "\x1b", state)
@@ -1197,7 +1607,7 @@ def handle_input(world, buf, state):
     return ""
 
 
-def run_interactive():
+def run_interactive(skip_intro=False):
     import termios
     import tty
 
@@ -1205,6 +1615,8 @@ def run_interactive():
     old = termios.tcgetattr(fd)
     out = sys.stdout
     world = World()
+    if skip_intro:
+        world.set_view("menu")
     state = {"quit": False, "paused": False}
     last_size = None
     bridge = Bridge(RUNTIME_DIR)
@@ -1235,7 +1647,7 @@ def run_interactive():
             bridge.write_state(world, state["paused"])
             # 개요는 정적 화면: 1초에 한 번만 다시 그린다
             key = (world.view, size, state["paused"], int(world.t), len(world.logs), world.unseen)
-            if world.view != "overview" or key != cache_key:
+            if world.phase != "play" or world.view != "overview" or key != cache_key:
                 cache_key = key
                 frame = compose(world, size.columns, size.lines, state["paused"])
                 out.write("\x1b[H" + "\r\n".join(frame))
@@ -1249,29 +1661,187 @@ def run_interactive():
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
+SGR = re.compile(r"\x1b\[([0-9;]*)m")
+PANE_KEYS = {"return": "\r", "enter": "\r", "tab": "\t", "space": " ", "backspace": "\x1b", "delete": "\x1b"}
+
+
+def frame_runs(lines):
+    """compose() 가 만든 ANSI 줄을 [[글자, 전경, 배경, 굵게], ...] 줄 목록으로 (256색 번호)."""
+    rows = []
+    for line in lines:
+        runs, st, pos = [], (7, 16, 0), 0
+        for m in list(SGR.finditer(line)) + [None]:
+            text = line[pos:m.start() if m else len(line)]
+            if text:
+                if runs and tuple(runs[-1][1:]) == st:
+                    runs[-1][0] += text
+                else:
+                    runs.append([text, st[0], st[1], st[2]])
+            if m is None:
+                break
+            p = m.group(1).split(";")
+            if "38" in p and "48" in p:
+                st = (int(p[p.index("38") + 2]), int(p[p.index("48") + 2]), 1 if "1" in p[:2] else 0)
+            pos = m.end()
+        rows.append(runs)
+    return rows
+
+
+def xterm_rgb(n):
+    """xterm 256색 번호 → 0xRRGGBB."""
+    if n < 16:
+        return [0x000000, 0x800000, 0x008000, 0x808000, 0x000080, 0x800080, 0x008080, 0xC0C0C0,
+                0x808080, 0xFF0000, 0x00FF00, 0xFFFF00, 0x0000FF, 0xFF00FF, 0x00FFFF, 0xFFFFFF][n]
+    if n < 232:
+        lv = (0, 95, 135, 175, 215, 255)
+        k = n - 16
+        return lv[k // 36] << 16 | lv[k // 6 % 6] << 8 | lv[k % 6]
+    v = 8 + (n - 232) * 10
+    return v << 16 | v << 8 | v
+
+
+RGB = [xterm_rgb(n) for n in range(256)]
+
+
+def frame_blocks(lines):
+    """패널용 프레임: 폭 1 글자만 있는 줄은 이어 붙여 Raster 칸(base64 u32 [글자, 전경, 배경])으로,
+    한글·이모지가 섞인 줄은 색 조각 [글자, #전경, #배경, 굵게] 로."""
+    import base64
+    import struct
+    blocks, buf, nrows = [], [], 0
+
+    def flush():
+        if buf:
+            blocks.append({"cells": base64.b64encode(b"".join(buf)).decode(), "rows": nrows})
+        del buf[:]
+
+    for runs in frame_runs(lines):
+        text = "".join(r[0] for r in runs)
+        if all(ord(c) < 0x10000 and cw(c) == 1 and c.isprintable() for c in text):
+            if not buf:
+                nrows = 0
+            buf.append(b"".join(struct.pack("<III", ord(c), RGB[r[1]], RGB[r[2]]) for r in runs for c in r[0]))
+            nrows += 1
+        else:
+            flush()
+            blocks.append({"runs": [[r[0], "#%06x" % RGB[r[1]], "#%06x" % RGB[r[2]], r[3]] for r in runs]})
+    flush()
+    return blocks
+
+
+def run_stream(w, h, skip_intro=False):
+    """옆 패널(Claude Code mod)용: 화면 없이 돌며 프레임을 한 줄 JSON 으로 stdout 에 쓴다.
+
+    입력은 .runtime/pane_cmd (한 줄에 '번호<TAB>명령', 번호가 커진 것만 처리):
+      key <이름>   up/down/left/right/return/tab/backspace 또는 글자
+      click X Y    패널 안 칸 좌표(0부터)
+      size WxH     패널 크기
+    그 밖의 명령은 ./market 과 같다 (.runtime/cmd 도 그대로 읽는다).
+    """
+    import json
+    world = World()
+    if skip_intro:
+        world.set_view("menu")
+    state = {"quit": False, "paused": False}
+    bridge = Bridge(RUNTIME_DIR)
+    pane_in = os.path.join(RUNTIME_DIR, "pane_cmd")
+
+    def pane_lines():
+        try:
+            with open(pane_in, encoding="utf-8", errors="ignore") as f:
+                out = []
+                for line in f.read().splitlines():
+                    n, _, cmd = line.partition("\t")
+                    if n.isdigit():
+                        out.append((int(n), cmd))
+                return out
+        except OSError:
+            return []
+
+    seen = max([n for n, _ in pane_lines()] or [0])  # 시작 전에 쌓인 명령은 무시
+    prev, last = time.time(), None
+    while not state["quit"]:
+        now = time.time()
+        dt, prev = min(0.2, now - prev), now
+        for n, cmd in pane_lines():
+            if n <= seen:
+                continue
+            seen = n
+            op, _, arg = cmd.partition(" ")
+            if op == "key":
+                k = PANE_KEYS.get(arg.lower(), arg)
+                if k.lower() != "q":  # 패널에서는 q 로 끄지 않는다 (패널을 닫으면 끝난다)
+                    handle_key(world, k, state)
+            elif op == "click":
+                x, y = (int(v) + 1 for v in arg.split()[:2])
+                for x0, x1, y0, y1, action in list(world.hits):
+                    if x0 <= x <= x1 and y0 <= y <= y1:
+                        action()
+                        break
+            elif op == "size":
+                try:
+                    w, h = (max(20, int(v)) for v in arg.lower().split("x"))
+                except ValueError:
+                    pass
+            elif cmd.strip():
+                world.command(cmd)
+        for line in bridge.read_commands():
+            if line.strip().lower() in ("pause", "resume"):
+                state["paused"] = line.strip().lower() == "pause"
+            else:
+                world.command(line)
+        if not state["paused"]:
+            world.update(dt)
+        bridge.write_state(world, state["paused"])
+        out = json.dumps({"cols": w, "blocks": frame_blocks(compose(world, w, h, state["paused"]))},
+                         ensure_ascii=False, separators=(",", ":"))
+        if out != last:
+            last = out
+            try:
+                sys.stdout.write(out + "\n")
+                sys.stdout.flush()
+            except (BrokenPipeError, OSError):
+                return
+        time.sleep(max(0.0, 1.0 / 8 - (time.time() - now)))  # 패널은 초당 8장
+
+
 def main():
     ap = argparse.ArgumentParser(description="Ops Christmas Market - 터미널 메타버스 대시보드 PoC")
     ap.add_argument("--seed", type=int, help="난수 시드(같은 연출 재현)")
     ap.add_argument("--snapshot", type=float, metavar="SEC", help="SEC초 시뮬레이션 뒤 한 프레임만 출력하고 종료")
     ap.add_argument("--size", default="100x30", help="--snapshot 화면 크기 (기본 100x30)")
     ap.add_argument("--plain", action="store_true", help="--snapshot 출력에서 색 제거")
-    ap.add_argument("--view", default="overview", choices=["overview", "traffic", "sentry"], help="--snapshot 화면")
+    ap.add_argument("--view", default="overview", choices=["intro", "menu", "overview", "traffic", "sentry"],
+                    help="--snapshot 화면")
+    ap.add_argument("--service", default="ALL", help="--snapshot 스테이지 서비스 (%s)" % ", ".join(s[0] for s in SERVICES))
+    ap.add_argument("--skip-intro", action="store_true", help="타이틀 없이 메뉴부터")
+    ap.add_argument("--stream", action="store_true", help="옆 패널용: 프레임을 JSON 줄로 stdout 에 (크기는 --size)")
     args = ap.parse_args()
     if args.seed is not None:
         R.seed(args.seed)
+    if args.stream:
+        w, h = (int(v) for v in args.size.lower().split("x"))
+        run_stream(w, h, args.skip_intro)
+        return
     if args.snapshot is not None:
         w, h = (int(v) for v in args.size.lower().split("x"))
         world = World()
+        if args.view in ("intro", "menu"):
+            world.set_view(args.view)
+        else:
+            idx = world.find_service(args.service)
+            if idx is None:
+                sys.exit("알 수 없는 서비스: %s" % args.service)
+            world.start_stage(idx, args.view)
         compose(world, w, h)
         for _ in range(int(args.snapshot * FPS)):
             world.update(1.0 / FPS)
-        world.set_view(args.view)
         frame = compose(world, w, h)
         print("\n".join(ANSI.sub("", l) if args.plain else l for l in frame))
         return
     if not sys.stdin.isatty():
         sys.exit("터미널(TTY)에서 실행하세요. 미리보기는 --snapshot 옵션을 쓰세요.")
-    run_interactive()
+    run_interactive(args.skip_intro)
 
 
 if __name__ == "__main__":
