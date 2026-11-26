@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# 대시보드에 명령 보내기 / 현황 읽기.  예) ./market status | ./market outbreak 3 | ./market focus WEB-2B1
+set -euo pipefail
+DIR="${XMAS_MARKET_RUNTIME:-$(cd "$(dirname "$0")" && pwd)/.runtime}"
+mkdir -p "$DIR"
+case "${1:-help}" in
+  status)
+    [ -f "$DIR/state.json" ] || { echo "대시보드가 실행 중이 아니다 (state.json 없음)"; exit 1; }
+    cat "$DIR/state.json" ;;
+  help|-h|--help)
+    cat <<'H'
+./market status                 현황 JSON (트래픽·쥐·병정·통계·최근 로그·현재 화면)
+./market view overview|traffic|sentry   화면 전환 (개요 / 광장 / 전투)
+./market spike                  트래픽 급증
+./market outbreak [N]           쥐 떼 N마리 (기본 5)
+./market mouse                  쥐 1마리
+./market focus <ISSUE-ID>       병정이 그 쥐부터 처치
+./market human                  우리 속(needs-human) 쥐 처리 완료
+./market say <메시지>            대시보드 로그에 메시지 표시
+./market auto on|off            자동 연출
+./market pause | resume
+H
+    ;;
+  *) printf '%s\n' "$*" >> "$DIR/cmd"; echo "sent: $*" ;;
+esac
