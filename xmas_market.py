@@ -901,7 +901,7 @@ class World:
             self.passing.append([x, y, p.pal, 0.0])
             self.admit_acc = 0.0
             self.admitted += 1
-            for _ in range(4):  # 계산: 동전이 튄다
+            for _ in range(4 if self.view == "traffic" else 0):  # 계산: 동전이 튄다 (트래픽 화면에서만)
                 self.particles.append([self.gate_x + 1, y + 2, R.uniform(-3, 3), R.uniform(-9, -4),
                                        R.choice([220, 226, 214]), 0.6])
         for i, p in enumerate(self.queue):
