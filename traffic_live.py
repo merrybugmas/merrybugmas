@@ -17,10 +17,17 @@ Grafana 를 거치지 않고 서버의 /metrics 를 직접 읽는다 (Prometheus
   TRAFFIC_METRIC       카운터 이름 (기본 http_requests_total, 라벨이 여러 개면 모두 더한다)
   TRAFFIC_PEAK         "최고치"로 볼 rps (기본 100). 줄 길이·인파 경보는 rps ÷ 이 값으로 정한다
   TRAFFIC_POLL         읽는 주기, 초 (기본 1)
+  TRAFFIC_ADMIN_URL    레버 주소 (기본: TRAFFIC_METRICS_URL 의 경로를 /admin/levers 로 바꾼 것)
+
+레버 (쓰기는 여기만): demo-web 서버의 /admin/levers 에 캐시·처리 슬롯·번호표를 켜고 끈다 (엘프 에이전트가 쓴다).
+/metrics 의 demo_capacity · demo_cache_enabled · demo_waitroom_enabled · demo_waiting 이 지금 레버 상태다.
 """
+import json
 import os
+import queue
 import threading
 import time
+import urllib.parse
 import urllib.request
 
 STALE_SEC = 5.0  # 이만큼 못 읽으면 0 rps 로 본다 (마지막 값을 계속 보여 주지 않는다)
@@ -30,6 +37,8 @@ def configured():
     return bool(os.environ.get("TRAFFIC_METRICS_URL", "").strip())
 
 
+LEVER_GAUGES = (("capacity", "demo_capacity"), ("cache", "demo_cache_enabled"), ("waitroom", "demo_waitroom_enabled"),
+                ("waiting", "demo_waiting"), ("inflight", "demo_inflight"))
 WINDOW_SEC = 10.0  # 5xx 비율·응답 시간을 내는 구간
 VITALS = (("lcp_s", "web_vitals_lcp_seconds"), ("cls", "web_vitals_cls"),
           ("inp_s", "web_vitals_inp_seconds"), ("ttfb_s", "web_vitals_ttfb_seconds"))
@@ -81,6 +90,7 @@ class TrafficFeed:
         self.prev = None  # (시각, 누적 요청 수)
         self.value, self.ok_at = 0.0, None
         self.window = []  # 최근 WINDOW_SEC 의 (시각, 요청 수, 5xx 수, 응답 시간 합, 응답 시간 건수)
+        self.levers = {}  # 서버가 /metrics 로 알려 준 레버 상태 (demo-web 이 아니면 빈 dict)
         self.extra = {}  # error_pct · latency_ms · lcp_s · cls · inp_s · ttfb_s · vitals_reports (없는 것은 None)
         self.calls = self.fails = 0
         self.last_error = None
@@ -128,6 +138,10 @@ class TrafficFeed:
             extra[key] = total_of(samples, name)
         extra["vitals_reports"] = total_of(samples, "web_vitals_reports_total")
         self.extra = extra
+        lv = {k: total_of(samples, name) for k, name in LEVER_GAUGES}
+        self.levers = {} if lv["capacity"] is None else {
+            "cache": bool(lv["cache"]), "capacity": int(lv["capacity"]), "waitroom": bool(lv["waitroom"]),
+            "waiting": int(lv["waiting"] or 0), "inflight": int(lv["inflight"] or 0)}
 
     def metrics(self):
         """지금 보여 줄 부가 지표. 오래 못 읽었으면 빈 값."""
@@ -158,3 +172,51 @@ class TrafficFeed:
         req = urllib.request.Request(url, headers={"User-Agent": "merrybugmas-dashboard"})
         with urllib.request.urlopen(req, timeout=self.timeout) as r:
             return r.read().decode("utf-8", "replace")
+
+
+def admin_url():
+    """레버 주소. TRAFFIC_ADMIN_URL 이 없으면 TRAFFIC_METRICS_URL 의 경로만 /admin/levers 로 바꾼다."""
+    url = os.environ.get("TRAFFIC_ADMIN_URL", "").strip()
+    if url:
+        return url
+    u = urllib.parse.urlsplit(os.environ.get("TRAFFIC_METRICS_URL", "").strip())
+    return urllib.parse.urlunsplit((u.scheme, u.netloc, "/admin/levers", "", "")) if u.netloc else ""
+
+
+class LeverClient:
+    """서버 레버를 백그라운드에서 바꾼다 (대시보드가 멈추지 않게). transport(url, body) -> dict 를 바꿔 끼우면 테스트용."""
+
+    def __init__(self, url=None, transport=None, timeout=3.0):
+        self.url = admin_url() if url is None else url
+        self.transport, self.timeout = transport or self._post, timeout
+        self.jobs, self.results = queue.Queue(), queue.Queue()
+        self.calls = self.fails = 0
+        threading.Thread(target=self._work, daemon=True).start()
+
+    def submit(self, changes, ctx=None):
+        self.jobs.put((dict(changes), ctx))
+
+    def poll(self):
+        """끝난 변경: [(ctx, 서버가 돌려준 레버 상태, 오류)]."""
+        out = []
+        while True:
+            try:
+                out.append(self.results.get_nowait())
+            except queue.Empty:
+                return out
+
+    def _work(self):
+        while True:
+            changes, ctx = self.jobs.get()
+            self.calls += 1
+            try:
+                self.results.put((ctx, self.transport(self.url, changes), None))
+            except Exception as e:  # noqa: BLE001
+                self.fails += 1
+                self.results.put((ctx, None, e))
+
+    def _post(self, url, body):
+        req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method="POST",
+                                     headers={"Content-Type": "application/json", "User-Agent": "merrybugmas-dashboard"})
+        with urllib.request.urlopen(req, timeout=self.timeout) as r:
+            return json.loads(r.read().decode("utf-8"))

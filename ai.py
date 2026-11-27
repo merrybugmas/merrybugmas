@@ -4,6 +4,7 @@
   order  : 채팅 명령 한 줄 → {병정, 행동, 이슈 ID, 대답}   (키워드에 없는 말도 알아듣는다)
   triage : Sentry 이슈 제목 → {fixable / noise / needs-human, 판정 근거, 수정 요약}
   brief  : 대시보드 현황 JSON → 운영 브리핑 3줄 + 권고 1줄
+  traffic: 트래픽 지표·레버 상태 → 엘프가 당길 레버 하나와 근거 (트래픽 대응 에이전트, 경보 때만 1회)
 
 대시보드가 멈추지 않도록 호출은 백그라운드 스레드에서 하고, 결과는 World 가 매 프레임 poll() 로 가져간다.
 OPENAI_API_KEY 가 없거나 호출이 실패하면 대시보드는 예전 키워드·mock 판정으로 그대로 돈다.
@@ -61,6 +62,18 @@ BRIEF_SCHEMA = {
     },
 }
 
+LEVERS = ["cache", "capacity", "waitroom", "human", "none"]
+TRAFFIC_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["lever", "reason", "say"],
+    "properties": {
+        "lever": {"type": "string", "enum": LEVERS},
+        "reason": {"type": "string"},
+        "say": {"type": "string"},
+    },
+}
+
 ORDER_PROMPT = """너는 크리스마스 마켓 운영 대시보드의 호두까기 병정 지휘 통역이다.
 병정은 Sentry 이슈(쥐)를 처리하는 sentry-bot 서브 에이전트 셋이다: 1 루돌프, 2 진저, 3 호두.
 사용자의 한국어 명령 한 줄과 현재 상황(JSON)을 받아 어떤 병정이 무엇을 할지 정한다.
@@ -104,6 +117,21 @@ traffic.rps/peak_rps/crowd 는 트래픽, mice 는 미해결 Sentry 이슈(state
 soldiers 는 sentry-bot 서브 에이전트, history 는 처리 결과, stats 는 누적 통계다.
 summary: 숫자를 넣어 상황을 2~3줄로 (각 줄 45자 이내, 한국어)
 advice: 운영자가 지금 하면 좋을 일 한 줄 (45자 이내). 병정 명령이 필요하면 예: "진저에게 WEB-2B1 먼저 잡게 하세요"
+"""
+
+TRAFFIC_PROMPT = """너는 크리스마스 마켓 상점의 엘프 점원이자 트래픽 대응 에이전트다. 웹 서버에 요청이 몰려 경보가 울렸다.
+상황 JSON 을 보고 지금 당길 레버를 하나 고른다.
+  load: rps ÷ 처리 가능량 추정 (1 이상이면 넘침), rps·peak_rps, error_pct(5xx %), latency_ms(평균 응답),
+  waiting(슬롯을 기다리는 요청 수), levers(지금 레버 상태), tried(이번 경보에서 이미 당긴 레버), api_errors(5xx 가 과부하 때문이 아닐 수 있음)
+lever:
+  cache     = 느린 API 응답 캐시를 켠다. 응답 시간이 높고 캐시가 꺼져 있을 때 먼저. 위험 낮음
+  capacity  = 처리 슬롯(계산대)을 늘린다. 캐시 뒤에도 넘치거나 waiting 이 쌓일 때. 최대 8
+  waitroom  = 번호표: 넘치는 요청을 기다리게 두지 않고 429 로 돌려보낸다. 다른 레버로 안 될 때 최후 수단 (사람 승인 필요)
+  human     = 레버로 해결할 문제가 아니다 (부하는 낮은데 5xx, 특정 API 장애 등). 담당자를 부른다
+  none      = 조치가 필요 없다 (일시적인 출렁임)
+이미 켠 레버(levers)·tried 에 있는 레버는 다시 고르지 않는다 (capacity 는 최대 8 전까지 다시 가능).
+reason: 판단 근거 (한국어, 숫자 포함, 40자 이내)
+say: 엘프가 할 짧은 말 (한국어, 30자 이내)
 """
 
 
@@ -235,8 +263,13 @@ class Brain:
             raise ValueError("브리핑이 비었음")
         return {"summary": lines[:3], "advice": _str(r.get("advice"))}
 
+    def traffic(self, p):
+        r = self.ask(TRAFFIC_PROMPT, json.dumps(p, ensure_ascii=False), "traffic_lever", TRAFFIC_SCHEMA, tries=1)  # 예산 아끼기: 재시도 없음
+        return {"lever": _choice(r.get("lever"), LEVERS, "lever"), "reason": _str(r.get("reason")),
+                "say": _str(r.get("say"))}
+
     # ---- OpenAI 호출
-    def ask(self, instructions, user, name, schema):
+    def ask(self, instructions, user, name, schema, tries=3):
         body = {
             "model": self.model,
             "instructions": instructions,
@@ -247,7 +280,7 @@ class Brain:
             body["reasoning"] = {"effort": self.effort}
         with self.lock:
             self.calls += 1
-        for attempt in range(3):
+        for attempt in range(tries):
             try:
                 return json.loads(extract_text(self.transport(body)))
             except urllib.error.HTTPError as e:
@@ -256,12 +289,12 @@ class Brain:
                     self.effort = ""  # reasoning 을 모르는 모델이면 빼고 다시 보낸다
                     body.pop("reasoning")
                     continue
-                if e.code in (429, 500, 502, 503, 504) and attempt < 2:
+                if e.code in (429, 500, 502, 503, 504) and attempt < tries - 1:
                     time.sleep(1.5 * (attempt + 1))
                     continue
                 raise RuntimeError("HTTP %d: %s" % (e.code, detail[:160]))
             except (urllib.error.URLError, TimeoutError):
-                if attempt < 2:
+                if attempt < tries - 1:
                     time.sleep(1.0)
                     continue
                 raise

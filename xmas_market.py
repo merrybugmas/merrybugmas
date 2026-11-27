@@ -37,6 +37,7 @@ try:
     import fixer  # 병정의 실제 수정: 코드 패치 → GitHub PR (--live, XMAS_FIX_REPO)
 except ImportError:  # pragma: no cover
     fixer = None
+import elf  # noqa: E402 — 엘프 점원: 트래픽 대응 에이전트 (레버: 캐시·계산대·번호표)
 try:
     import traffic_live  # 트래픽 실연동 (/metrics 읽기, --live)
 except ImportError:  # pragma: no cover
@@ -252,6 +253,8 @@ SOLDIER = [
 SOLDIER_STEP = ["BB...BB", "kk...kk"]
 
 # 방문객 (3 x 6) - H(모자/머리) C(외투) P(바지) 는 사람마다 다르다
+ELF_SPR = ["..R", ".GG", "GGG", ".S.", "GGG", "GGG", "k.k"]  # 엘프 점원: 빨간 방울 달린 초록 모자
+ELF_PAL = {"R": 196, "G": 34, "S": 223, "k": 16}
 VISITOR = [".H.", ".S.", "CCC", "CCC", "P.P", "k.k"]
 VISITOR_STEP = [".P.", ".k."]
 
@@ -686,6 +689,7 @@ class World:
         self.fixer = None  # fixer.Fixer: 있으면 실제 Sentry 이슈의 fixable 판정은 코드 패치 PR 로 이어진다
         self.traffic = None  # traffic_live.TrafficFeed: 있으면 rps 는 실제 서버 /metrics 에서 읽은 값이다
         self.traffic_down = False
+        self.elf = elf.Elf()  # 트래픽 대응 에이전트. 실서버 레버는 attach_traffic 이 client 를 붙인다
         self.live_fail = None  # --live 를 켰는데 못 붙은 이유 (스테이지 시작 로그에 다시 보여 준다)
         self.live_wait, self.live_acc = [], 0.0  # 아직 화면에 안 나온 실제 이슈 · 다음 등장까지 남은 시간
         self.fired = set()
@@ -725,6 +729,11 @@ class World:
                 self.peak = self.traffic.peak  # 실제 트래픽은 서비스 배율 없이 그대로
             self.mice, self.queue, self.passing, self.particles = [], [], [], []
             self.soldiers = [Soldier(i, self) for i in range(3)]
+            old = self.elf
+            self.elf = elf.Elf(old.client, old.ai_max)
+            self.elf.ai_used = old.ai_used  # AI 예산은 판이 바뀌어도 이어서 센다
+            if old.client is not None:  # 실서버 레버는 새 판에서도 그대로 남아 있으니 기준도 이어받는다
+                self.elf.levers, self.elf.base, self.elf.synced = dict(old.levers), dict(old.base), old.synced
             self.stage_gen += 1
             self.stats = {"fixed": 0, "noise": 0, "human": 0, "blocked": 0}
             self.history, self.show_hist, self.hist_sel, self.flying = [], False, None, []
@@ -843,7 +852,13 @@ class World:
         return [s for s in self.soldiers if s.name in who]
 
     def order(self, text, who=None):
-        """자연어 명령 한 줄. AI 가 켜져 있으면 OpenAI 로 해석하고(키워드에 없는 말도), 아니면 키워드로 알아듣는다."""
+        """자연어 명령 한 줄. AI 가 켜져 있으면 OpenAI 로 해석하고(키워드에 없는 말도), 아니면 키워드로 알아듣는다.
+        엘프(트래픽 대응)에게 하는 말은 OpenAI 를 거치지 않고 키워드로 바로 넘긴다."""
+        m = re.match(r"\s*(엘프|elf)\s*(?:야|아|에게|한테)?\s*[,:]?\s*(.*)", text, re.I)
+        if m and who is None:
+            self.log("📣 명령 → 엘프: %s" % m.group(2).strip()[:50], 229, "all")
+            self.elf.command(self, m.group(2))
+            return
         if self.ai is not None and who is None and not getattr(self.ai, "replay", False):
             self.log("📣 명령: %s  (🧠 해석 중…)" % text.strip()[:50], 229, "all")
             self.ai.submit("order", {"text": text, "context": self.ai_context()}, (self.stage_gen, text))
@@ -1123,11 +1138,13 @@ class World:
 
     def update_queue(self, dt):
         target, n = self.queue_target(), len(self.queue)
+        if self.elf.levers["waitroom"]:  # 번호표: 화면 밖까지 줄을 세우지 않는다 (넘치는 손님은 돌려보냄)
+            target = min(target, max(2, int(self.qcap * 0.85)))
         if not n and not self.admitted:  # 스테이지 첫 프레임: 줄을 미리 세워 둔다
             self.queue = [Queuer(Queuer.GAP * i) for i in range(target)]
             n = target
         # 입구는 늘 사람을 들이고(줄이 움직이도록), 줄이 목표보다 길면 더 빨리 들인다
-        mu = min(3.5, 1.2 + 0.15 * max(0, n - target))
+        mu = min(3.5, 1.2 + 0.15 * max(0, n - target)) * self.elf.relief()  # 계산대·캐시만큼 빨리 계산
         lam = 1.2 + 1.5 * max(0, target - n) if n < target + 3 else 0.2
         if R.random() < lam * dt:
             self.queue.append(Queuer(max(self.qvis + 6, Queuer.GAP * n + 4)))
@@ -1176,7 +1193,9 @@ class World:
             return
         if gen != self.stage_gen:  # 판이 바뀌었다
             return
-        if kind == "order":
+        if kind == "traffic":
+            self.elf.on_ai(self, res, err)
+        elif kind == "order":
             if err is not None:
                 self.log("🧠 해석 실패 (%s) - 키워드로 처리" % type(err).__name__, 245, "all")
                 self.order_keywords(obj)
@@ -1246,6 +1265,7 @@ class World:
             self.ehist = (self.ehist + [len(self.spawn_times)])[-60:]
 
         self.update_queue(dt)  # 대기열 길이 = 트래픽
+        self.elf.update(self, dt)  # 엘프: 밀리면 레버를 당긴다
 
         for m in self.mice:
             m.update(self, dt)
@@ -1316,6 +1336,8 @@ class World:
                 self.start_stage(idx, scn)
         elif op in ("tell", "order"):
             self.order(arg)
+        elif op in ("elf", "엘프", "lever"):
+            self.elf.command(self, arg)
         elif op == "prs":
             prs = list(self.fixer.db.items()) if self.fixer else []
             if not prs:
@@ -1343,7 +1365,8 @@ class World:
             "traffic": {"rps": int(self.rps), "peak_rps": int(self.peak), "queue": len(self.queue),
                         "queue_offscreen": self.queue_offscreen() if self.w else 0,
                         "admitted": self.admitted, "crowd": label,
-                        "web": self.web_metrics(),  # 실연동일 때만: error_pct·latency_ms·lcp_s·cls·inp_s·ttfb_s
+                        "web": self.web_metrics(),
+                        "elf": self.elf.snapshot(),  # 트래픽 대응 에이전트: 상태·레버·조치 기록  # 실연동일 때만: error_pct·latency_ms·lcp_s·cls·inp_s·ttfb_s
                         "history_rps": [int(v) for v in self.hist[-20:]]},
             "mice": [{"id": m.issue["id"], "title": m.issue["title"],
                       "kind": "pending" if m.issue.get("ai") == "pending" else m.issue["kind"],
@@ -1655,12 +1678,14 @@ class World:
             for i in range(sx + 1, w - 1):
                 if (i + k) % 2 == 0:
                     cv.set(i, yy, LIGHTS[(i * 3 + k) % len(LIGHTS)])
-        kx = sx + sw // 2  # 산타 모자를 쓴 점원
-        cv.set(kx, gy - 1, 255)
-        cv.rect(kx - 1, gy, 3, 1, 196)
-        cv.rect(kx - 1, gy + 1, 3, 2, 223)
-        cv.set(kx - 1, gy + 1, 16)
-        cv.set(kx + 1, gy + 1, 16)
+        clerks = max(1, min(3, (self.elf.levers["capacity"] + 1) // 2))  # 산타 모자 점원 = 계산대 (엘프가 늘린다)
+        for i in range(clerks):
+            kx = sx + sw * (2 * i + 1) // (2 * clerks)
+            cv.set(kx, gy - 1, 255)
+            cv.rect(kx - 1, gy, 3, 1, 196)
+            cv.rect(kx - 1, gy + 1, 3, 2, 223)
+            cv.set(kx - 1, gy + 1, 16)
+            cv.set(kx + 1, gy + 1, 16)
         for x, y, pal, st in self.passing:  # 계산 마친 손님 (카운터 뒤로 들어간다)
             cv.blit(VISITOR[:4] + (VISITOR_STEP if int(st * 6) % 2 else VISITOR[4:]), x, y, pal)
         cv.rect(sx, gy + 3, sw, bottom - gy - 2, 130)  # 카운터
@@ -1675,6 +1700,23 @@ class World:
         sign = "SHOP"
         cv.rect(sx, gy - 12, sw, 3, 22)  # 간판 판자: 차양 바로 위에 붙인다
         cv.put(sx + (sw - len(sign)) // 2, (gy - 11) // 2, sign, 226, 22, True)
+        # 엘프(트래픽 대응 에이전트): 간판 위에서 줄을 지켜본다. 경보면 깡충, 말하면 말풍선
+        e = self.elf
+        ey = gy - 12 - len(ELF_SPR) - (1 if e.state in ("think", "ask", "watch") and int(t * 4) % 2 else 0)
+        ex = sx + sw // 2 - 1
+        cv.blit(ELF_SPR, ex, ey, ELF_PAL)
+        tags = [t_ for t_, on in (("WRAP", e.levers["cache"]), ("TICKET", e.levers["waitroom"])) if on]
+        if tags:  # 켠 레버는 간판 옆에 작은 팻말로
+            tag = " ".join(tags)
+            cv.put(sx - len(tag) - 1, (gy - 11) // 2, tag, 16, 226 if e.levers["waitroom"] else 120, True)
+        if e.speech_t > 0 or e.state in ("think", "ask"):
+            msg = e.speech if e.speech_t > 0 else ("? 판단 중" if e.state == "think" else "승인 대기!")
+            parts = wrap_cols(msg, min(44, max(16, w - 4)))
+            row = ey // 2 - len(parts)
+            for k, part in enumerate(parts):
+                if 0 <= row + k:
+                    part = " %s " % part
+                    cv.put(min(max(0, ex + 1 - dw(part) // 2), w - dw(part)), row + k, part, 16, 230)
         for p in self.particles:
             cv.set(p[0], p[1], p[4])
 
@@ -1778,6 +1820,21 @@ def card(width, height, title, hint, body, bc):
     return rows
 
 
+def elf_segs(world):
+    """엘프 한 줄: 상태 · 레버(켜진 것은 밝게) · AI 사용 횟수."""
+    e = world.elf
+    st = e.state if e.auto else "off"
+    col = {"ask": 226, "think": 141, "watch": 214, "flag": 203}.get(st, 120)
+    lv = e.levers
+    segs = [("🧝 엘프 ", 250), (elf.STATE_WORD.get(st, st), col, True),
+            ("  캐시 ", 245), ("ON" if lv["cache"] else "off", 46 if lv["cache"] else 240, lv["cache"]),
+            ("  계산대 ", 245), (str(lv["capacity"]), 46 if lv["capacity"] > e.base["capacity"] else 250, True),
+            ("  번호표 ", 245), ("ON" if lv["waitroom"] else "off", 226 if lv["waitroom"] else 240, lv["waitroom"])]
+    if e.ai_ready(world):
+        segs.append(("  🧠%d/%d" % (e.ai_used, e.ai_max), 141))
+    return segs
+
+
 def traffic_card(world, width, height):
     label, lcol = world.crowd_label()
     peak = max(world.hist[-60:] or [world.rps])
@@ -1789,6 +1846,7 @@ def traffic_card(world, width, height):
         [("  상점 대기열 %d명" % len(world.queue), 250),
          ("  (화면 밖 +%d)" % world.queue_offscreen() if world.queue_offscreen() else "", 203)],
         [("  30초 최고 %s rps" % format(int(peak), ","), 245)],
+        [("  ", 245)] + elf_segs(world),
         [],
     ]
     web = world.web_metric_segs()
@@ -2126,7 +2184,9 @@ def compose(world, w, h, paused=False):
             ("  │ 계산 완료 %d명" % world.admitted, 245)]
             + ([("  │ ", 240)] + world.web_metric_segs() if world.web_metric_segs()
                else [("   (rps가 오르면 줄이 길어진다)", 242)]), w, 235))
-        lines.append(seg_line([("  트래픽 30초 ", 250), (spark(world.hist, n, world.peak), 51)], w, 234))
+        es = elf_segs(world)
+        n2 = max(10, w - 18 - seg_width(es))
+        lines.append(seg_line([("  트래픽 30초 ", 250), (spark(world.hist, n2, world.peak), 51), ("  │ ", 240)] + es, w, 234))
         lines += world.draw("traffic").lines()
         keys = "[Esc]메뉴 [0]개요 [2]Sentry [t]트래픽 급증 [space]정지 [q]종료"
         cats = ("all", "traffic")
@@ -2346,8 +2406,9 @@ def live_failed(world, why):
     return False
 
 
-def attach_traffic(world, feed=None):
-    """--live: 실제 서버의 /metrics 에서 rps 를 읽는다. 첫 읽기가 실패하면 mock 트래픽으로 돈다."""
+def attach_traffic(world, feed=None, levers=None):
+    """--live: 실제 서버의 /metrics 에서 rps 를 읽는다. 첫 읽기가 실패하면 mock 트래픽으로 돈다.
+    서버가 레버 상태(demo_capacity …)를 내보내면 엘프가 /admin/levers 로 실제 레버를 당긴다."""
     if traffic_live is None:
         return False
     feed = feed or traffic_live.TrafficFeed()
@@ -2359,6 +2420,13 @@ def attach_traffic(world, feed=None):
     feed.start()
     world.log("🔌 트래픽 실연동 - %s 의 %s 를 %g초마다 읽음 (최고치 %d rps)" % (
         feed.url, feed.metric, feed.interval, feed.peak), 141, "all")
+    if levers is None and feed.levers and traffic_live.admin_url():
+        levers = traffic_live.LeverClient()
+    if levers is not None:
+        world.elf.client = levers
+        world.log("🧝 엘프가 서버 레버를 맡음 (%s) - 캐시·계산대는 자동, 번호표는 승인 후" % levers.url, 141, "all")
+    else:
+        world.log("🧝 서버에 레버(/admin/levers)가 없어 엘프는 지켜보고 알리기만 한다", 245, "all")
     return True
 
 
