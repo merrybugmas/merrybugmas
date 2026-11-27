@@ -22,6 +22,7 @@ class TrafficWorld(ui.World):
         self.experiment = session
         self.auto = False
         self.start_stage(0, 'traffic')
+        self.elf.state = 'idle'
 
     # 공통 화면의 데이터 출처 설명
     def source_note(self):
@@ -31,6 +32,27 @@ class TrafficWorld(ui.World):
     def update(self, dt):
         self.t += dt
         self.experiment.update(self, dt, ui)
+
+    # 입장과 퇴장 동선을 분리하고 병정 옆 상점 공간 확보
+    def layout(self, width, height):
+        super().layout(width, height)
+        self.qpts = [(self.gate_x - 4, self.bottom - 5), (-4, self.bottom - 5)]
+        self.qvis = self.gate_x
+        self.qcap = int(self.qvis // ui.Queuer.GAP)
+        self.booths = [booth for booth in self.booths if booth[0] + len(booth[1]) + 4 <= width - 10]
+
+    # 달은 물음표처럼 보이지 않도록 둥근 모양으로 표시
+    def draw(self, view='traffic'):
+        canvas = super().draw(view)
+        mx, my = self.w - 9, 6
+        canvas.rect(mx - 3, my - 3, 7, 7, 17)
+        for dy in range(-3, 4):
+            for dx in range(-3, 4):
+                if dx * dx + dy * dy <= 9:
+                    canvas.set(mx + dx, my + dy, 230)
+        canvas.set(mx - 1, my - 1, 229)
+        canvas.set(mx + 1, my + 1, 229)
+        return canvas
 
     # 안내소 간판을 트래픽 화면에서만 표시
     def draw_market(self, canvas, top):

@@ -291,7 +291,7 @@ class Session:
             if person is None:
                 goal = ui.Queuer.GAP * i
                 person = ui.Queuer(max(getattr(world, 'qvis', 0) + 8, goal + 8))
-                person.entry_speed = max(ui.Queuer.SPEED, (person.d - goal) / .6)
+                person.entry_speed = ui.Queuer.SPEED
                 person.pal = self.customer_palette(rid, ui).copy()
                 person.request_id = rid
             goal = ui.Queuer.GAP * i
@@ -328,11 +328,13 @@ class Session:
                     start = self.service_position(world, previous_serving[rid])
                 elif visible_waiter:
                     start = world.qpos(previous[rid].d)
-                person = {'palette': palette, 'failed': bad, 'start': start, 'queue_exit': visible_waiter}
+                person = {'palette': palette, 'failed': bad, 'start': start, 'queue_exit': False}
                 if rid in previous_serving or visible_waiter:
                     person['born'] = world.t
                     self.departures[rid] = person
                 else:
+                    person['start'] = (world.w + 3, world.gpx + (10 if bad else 3))
+                    person['queue_exit'] = True
                     self.pending_departures[bad].append((rid, person))
             outcome_counts = {bad: sum(self.failed(request_map[rid]) == bad for rid in self.departures if rid in request_map)
                               for bad in (False, True)}
@@ -421,7 +423,7 @@ class Session:
         goal_y = world.bottom - 5 - (person['slot'] // 2) * 7
         return x + (goal_x - base_x) * progress, y + (goal_y - base_y) * progress
 
-    # 안내소에서 출구까지 고객별 고정 경로 계산
+    # 현재 위치에서 출구까지 고객별 고정 경로 계산
     def departure_position(self, world, person):
         age = world.t - person['born']
         if age < 0:
@@ -455,7 +457,7 @@ class Session:
                  f"대기 {s['queued']}  안내 중 {s['processing']}", f"완료 {c['success']}  실패 {c['failed']}",
                  f"평균 {number(m['avg_response_ms'])}", f"p95 {number(m['p95_response_ms'])}",
                  f"실패율 {number(None if m['failure_rate'] is None else m['failure_rate'] * 100, '%')}",
-                 f"처리량 {number(m['success_rps'], '/s')}", '표시: … 대기  ? 안내 중', '      + 완료  ! 실패', '', '성능 개선 에이전트', state['agent'], '', '선택한 고객']
+                 f"처리량 {number(m['success_rps'], '/s')}", '표시: … 대기  ? 안내 중', '      + 완료  ! 실패', '초록 안내원: 개선 상태', '파랑 직원: 안내소 담당', '', '성능 개선 에이전트', state['agent'], '', '선택한 고객']
         detail = state['detail']
         if detail:
             query = detail['query']
@@ -524,14 +526,13 @@ class Session:
         snapshot = state['run']
         status = '연결 확인 필요: ' + state['error'] if state['error'] else ('백엔드 연결 중' if not snapshot else
                  f"{snapshot['status']}  {state['run_id']}  " + ('수집 완료' if snapshot['telemetry_complete'] else '이벤트 수집 중'))
-        frame.append(ui.seg_line([('  ' + status, 203 if state['error'] else 159)], width, 235))
         cv = world.draw('traffic')
-        # 외부 에이전트의 실제 진행 단계만 안내원 말풍선으로 표시
+        # 상태 문구는 고객 동선과 겹치지 않는 상단에 표시
         message = PHASES.get(snapshot['agent_phase'], '작업 대기') if snapshot else '마켓 개장 준비'
         if snapshot and snapshot['agent_phase'] == 'idle':
             message = ':( 안내 지연 중' if snapshot['server_counts']['queued'] else ':) 요청 처리 중' if snapshot['status'] in ('pending', 'running') else ':) 실험 종료'
-        cv.put(max(0, scene_width - ui.dw(message) - 1), max(0, (world.bottom - 23) // 2), message, 16, 230, True)
-        for x, y in ((2, world.gpx - 13), (max(3, scene_width - 20), world.gpx + 2)):
+        frame.append(ui.seg_line([('  ' + message + ' | ' + status, 203 if state['error'] else 159)], width, 235))
+        for x, y in ((2, world.gpx - 13), (max(3, scene_width - 9), world.gpx - 13)):
             cv.blit(ui.SOLDIER, x, y, ui.SOLDIER_PAL)
         with self.lock:
             request_map = dict(self.requests)

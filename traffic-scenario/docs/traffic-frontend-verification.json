@@ -123,5 +123,10 @@
   "customer_identity_tests_passed": 65,
   "customer_palette_preserved_across_states": true,
   "actual_state_shown_above_customer": true,
-  "distant_processing_customer_stays_in_place": true
+  "distant_processing_customer_stays_in_place": true,
+  "market_layout_tests_passed": 66,
+  "guards_aligned_at_market_edges": true,
+  "status_message_moved_to_header": true,
+  "queued_customers_enter_at_constant_speed": true,
+  "unseen_results_enter_from_offscreen": true
 }

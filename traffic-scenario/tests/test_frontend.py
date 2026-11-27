@@ -2,7 +2,7 @@ import unittest
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from frontend.app import TrafficWorld, compose, frame_update, handle_input, saved_run, ui
 from frontend.session import Session
@@ -188,7 +188,7 @@ class TrafficFrontendTests(unittest.TestCase):
         session.apply([{'type': 'request.succeeded', 'request_id': 'r1', 'customer_id': 'c1', 'data': {}}])
         world.update(.1)
         person = session.departures['r1']
-        self.assertEqual(session.departure_position(world, person), (world.gate_x - 4, world.bottom - 5))
+        self.assertEqual(session.departure_position(world, person), (world.w + 3, world.gpx + 3))
         world.update(.5)
         position = session.departure_position(world, person)
         session.apply([{'type': 'request.succeeded', 'request_id': 'r2', 'customer_id': 'c2', 'data': {}}])
@@ -231,7 +231,7 @@ class TrafficFrontendTests(unittest.TestCase):
         world = TrafficWorld(session)
         compose(world, 140, 45)
         session.apply([{'type': 'request.queued', 'request_id': 'r1', 'customer_id': 'c1', 'data': {}}])
-        world.update(.6)
+        world.update(10)
         session.apply([{'type': 'request.processing', 'request_id': 'r1', 'customer_id': 'c1', 'data': {}}])
         world.update(.1)
         person = session.serving['r1']
@@ -277,6 +277,8 @@ class TrafficFrontendTests(unittest.TestCase):
         self.assertGreater(person.d, 0)
         self.assertLess(person.d, initial)
         world.update(.3)
+        self.assertAlmostEqual(initial - person.d, ui.Queuer.SPEED * .6)
+        world.update(10)
         self.assertAlmostEqual(person.d, 0)
 
     # 대기 고객이 한꺼번에 들어와도 캐릭터끼리 겹치지 않음
@@ -326,7 +328,7 @@ class TrafficFrontendTests(unittest.TestCase):
         world = TrafficWorld(session)
         compose(world, 140, 45)
         session.apply([{'type': 'request.queued', 'request_id': 'r', 'customer_id': 'c', 'data': {}}])
-        world.update(.6)
+        world.update(10)
         queue_position = world.qpos(world.queue[0].d)
         session.apply([{'type': 'request.processing', 'request_id': 'r', 'customer_id': 'c', 'data': {}}])
         world.update(0)
@@ -352,7 +354,7 @@ class TrafficFrontendTests(unittest.TestCase):
         compose(world, 140, 45)
         session.apply([{'type': 'request.queued', 'request_id': f'r-{i}', 'customer_id': f'c-{i}', 'data': {}}
                        for i in range(12)])
-        world.update(.6)
+        world.update(10)
         positions = {p.request_id: world.qpos(p.d) for p in world.queue}
         palettes = {p.request_id: p.pal.copy() for p in world.queue}
         session.apply([{'type': 'request.failed', 'request_id': rid, 'customer_id': rid, 'data': {'error_code': 'QUEUE_TIMEOUT'}}
@@ -422,7 +424,7 @@ class TrafficFrontendTests(unittest.TestCase):
         world = TrafficWorld(session)
         compose(world, 140, 45)
         session.apply([{'type': 'request.queued', 'request_id': 'r1', 'customer_id': 'c1', 'data': {}}])
-        world.update(.6)
+        world.update(10)
         palette = world.queue[0].pal.copy()
         self.assertEqual(session.customer_mark(session.requests['r1']), ('…', 214))
         session.apply([{'type': 'request.processing', 'request_id': 'r1', 'customer_id': 'c1', 'data': {}}])
@@ -444,7 +446,7 @@ class TrafficFrontendTests(unittest.TestCase):
         compose(world, 140, 45)
         session.apply([{'type': 'request.queued', 'request_id': f'r{i}', 'customer_id': f'c{i}', 'data': {}}
                        for i in range(12)])
-        world.update(.6)
+        world.update(10)
         person = session.characters['r11']
         palette = person.pal.copy()
         session.apply([{'type': 'request.processing', 'request_id': 'r11', 'customer_id': 'c11', 'data': {}}])
@@ -458,6 +460,20 @@ class TrafficFrontendTests(unittest.TestCase):
         self.assertNotIn('r11', session.serving)
         self.assertEqual(session.departures['r11']['palette'], palette)
         self.assertEqual(session.departure_position(world, session.departures['r11']), position)
+
+    # 병정은 양쪽 노점 끝에 정렬하고 상태 문구는 고객 동선 밖에 표시
+    def test_decorations_and_status_stay_outside_customer_routes(self):
+        session = Session('http://127.0.0.1:8000')
+        world = TrafficWorld(session)
+        with patch.object(ui.PixelCanvas, 'blit', autospec=True, side_effect=ui.PixelCanvas.blit) as blit:
+            frame = compose(world, 140, 45)
+        guards = [call.args[2:4] for call in blit.call_args_list if call.args[1] == ui.SOLDIER]
+        self.assertEqual(guards, [(2, world.gpx - 13), (world.w - 9, world.gpx - 13)])
+        self.assertTrue(all(x + len(name) + 4 <= world.w - 10 for x, name, _ in world.booths))
+        self.assertIn('마켓 개장 준비', ui.ANSI.sub('', frame[2]))
+        self.assertNotIn('마켓 개장 준비', ui.ANSI.sub('', '\n'.join(frame[3:-6])))
+        self.assertEqual(world.draw().get(world.w - 9, 6), 230)
+        self.assertEqual(world.qpos(world.qvis)[0], -4)
 
 
 if __name__ == '__main__':
