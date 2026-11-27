@@ -281,6 +281,83 @@ class AiEdgeCaseTest(unittest.TestCase):
         self.assertEqual(len(calls), 2)
 
 
+class LiveSentryTest(unittest.TestCase):
+    """--live: 가짜 Sentry 응답으로 (네트워크 안 씀)."""
+    ROWS = [{"shortId": "DEMO-2", "title": "API Error: 503 /api/member/info", "permalink": "https://example.invalid/2"},
+            {"shortId": "DEMO-1", "title": "TypeError: Cannot read properties of undefined (reading 'map')"}]
+
+    def feed(self, rows=None, fail=False):
+        import sentry_live
+
+        def transport(url):
+            self.urls.append(url)
+            if fail:
+                raise OSError("down")
+            return list(self.ROWS if rows is None else rows)
+        self.urls = []
+        f = sentry_live.SentryFeed(transport=transport, interval=3600)
+        f.org, f.project = "acme", "demo"
+        return f
+
+    def live_world(self, feed):
+        xm.R.seed(7)
+        w = xm.World()
+        w.auto = False
+        ok = xm.attach_live(w, feed)
+        w.start_stage(w.find_service("WEB"), "sentry")
+        xm.compose(w, 100, 30)
+        return w, ok
+
+    def test_real_issues_become_mice_and_no_mock_mice(self):
+        w, ok = self.live_world(self.feed())
+        self.assertTrue(ok)
+        self.assertIn("is%3Aunresolved", self.urls[0])
+        self.assertIn("/projects/acme/demo/issues/", self.urls[0])
+        step(w, 4)
+        self.assertEqual(sorted(m.issue["id"] for m in w.mice), ["DEMO-1", "DEMO-2"])  # 중복 없이, 오래된 것부터
+        self.assertEqual({m.issue["id"]: m.issue["kind"] for m in w.mice}["DEMO-2"], "needs-human")
+        w.outbreak()
+        w.spawn_one()
+        w.command("mouse")
+        w.command("outbreak 3")
+        step(w, 30)
+        seen = {m.issue["id"] for m in w.mice} | {r["id"] for r in w.history}
+        self.assertEqual(seen, {"DEMO-1", "DEMO-2"})  # 가짜 쥐가 섞이지 않는다
+        self.assertEqual(w.snapshot_state()["live"]["source"], "sentry")
+        self.assertIn("LIVE SENTRY", "\n".join(xm.ANSI.sub("", l) for l in xm.compose(w, 100, 30)))
+
+    def test_same_issue_not_spawned_twice(self):
+        f = self.feed()
+        w, _ = self.live_world(f)
+        step(w, 4)
+        f.fetch()
+        step(w, 4)
+        ids = [m.issue["id"] for m in w.mice] + [r["id"] for r in w.history]
+        self.assertEqual(len(ids), len(set(ids)))
+
+    def test_ai_triages_real_title(self):
+        f = self.feed(rows=[self.ROWS[1]])
+        xm.R.seed(7)
+        w = xm.World()
+        w.auto = False
+        fake = FakeOpenAI({"sentry_triage": {"kind": "noise", "reason": "테스트 근거", "fix": ""}})
+        w.ai = ai.Brain(key="k", transport=fake)
+        xm.attach_live(w, f)
+        w.start_stage(w.find_service("WEB"), "sentry")
+        xm.compose(w, 100, 30)
+        step(w, 2)
+        self.assertTrue(wait_ai(w, lambda: w.mice and w.mice[0].issue.get("note") == "테스트 근거"))
+        self.assertEqual(w.mice[0].issue["kind"], "noise")
+
+    def test_failure_falls_back_to_mock(self):
+        w, ok = self.live_world(self.feed(fail=True))
+        self.assertFalse(ok)
+        self.assertIsNone(w.live)
+        w.outbreak(2)
+        self.assertEqual(len(w.mice), 2)
+        self.assertTrue(any("mock 으로 진행" in t for _, t, _, _ in w.logs))
+
+
 class ReplayTest(unittest.TestCase):
     def test_record_then_replay(self):
         import tempfile

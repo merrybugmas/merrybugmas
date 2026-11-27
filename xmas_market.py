@@ -29,6 +29,10 @@ try:
     import ai  # 병정의 두뇌 (OpenAI API). 키가 없으면 키워드·mock 판정으로 돈다
 except ImportError:  # pragma: no cover
     ai = None
+try:
+    import sentry_live  # Sentry 실연동 (읽기 전용, --live)
+except ImportError:  # pragma: no cover
+    sentry_live = None
 
 FPS = 12
 PEAK_RPS = 3000
@@ -619,6 +623,9 @@ class World:
         self.auto = True
         self.stage_gen = 0  # 판이 바뀌면 +1. 이전 판에 보낸 AI 결과는 버린다
         self.ai = None  # ai.Brain: 있으면 병정 명령 해석·트리아지·브리핑을 OpenAI API 로 한다
+        self.live = None  # sentry_live.SentryFeed: 있으면 쥐는 실제 Sentry 미해결 이슈다 (트래픽은 mock)
+        self.live_fail = None  # --live 를 켰는데 못 붙은 이유 (스테이지 시작 로그에 다시 보여 준다)
+        self.live_wait, self.live_acc = [], 0.0  # 아직 화면에 안 나온 실제 이슈 · 다음 등장까지 남은 시간
         self.fired = set()
         self.phase = "intro"  # intro(타이틀) / menu(스테이지 고르기) / play
         self.intro_t = 0.0
@@ -660,7 +667,15 @@ class World:
             self.mr, self.admitted, self.admit_acc = 1400, 0, 0.0
             self.hist, self.ehist, self.spawn_times = [], [], []
             self.src.spikes, self.fired, self.t, self.logs = [], set(), 0.0, []
-            self.log("STAGE %s %s 시작! (mock 데이터)" % (svc[0], svc[1]), 220, "all")
+            if self.live is not None:
+                self.live.reset()
+                self.live_wait = []
+                self.log("STAGE %s %s 시작! (쥐 = Sentry %s/%s 실제 미해결 이슈, 트래픽은 mock)" % (
+                    svc[0], svc[1], self.live.org, self.live.project), 220, "all")
+            else:
+                self.log("STAGE %s %s 시작! (mock 데이터)" % (svc[0], svc[1]), 220, "all")
+                if self.live_fail:
+                    self.log("Sentry 실연동 실패 (%s) - mock 으로 진행" % self.live_fail, 203, "all")
         self.phase = "play"
         self.set_view(view)
 
@@ -890,6 +905,8 @@ class World:
     def spawn_mouse(self, issue=None):
         if sum(1 for m in self.mice if m.state != "dead") >= 16:
             return
+        if issue is None and self.live is not None:
+            return  # 실연동 중에는 가짜 쥐를 섞지 않는다
         issue = issue or self.src.make_issue(self.svc_key)
         issue.setdefault("born_t", self.t)
         if self.ai is not None:  # mock 판정 대신 AI 가 제목을 보고 판정한다 (오기 전까지 병정은 트리아지에서 기다림)
@@ -901,12 +918,40 @@ class World:
             self.unseen += 1
         self.spawn_times.append(self.t)
 
+    def poll_new_issues(self, dt):
+        """새 미해결 이슈. 실연동이면 Sentry 에서 읽은 것을 0.8초에 하나씩, 아니면 MockSource."""
+        if self.live is None:
+            return self.src.poll_issues(self.t, dt, self.ratio, self.svc[4], self.svc_key)
+        self.live_wait += self.live.poll()
+        while True:
+            try:
+                self.log("Sentry 읽기 실패 (%s) - 다음 주기에 다시 시도" % self.live.errors.get_nowait(), 245, "all")
+            except Exception:  # noqa: BLE001 — queue.Empty
+                break
+        self.live_acc -= dt
+        if not self.live_wait or self.live_acc > 0 or sum(1 for m in self.mice if m.state != "dead") >= 16:
+            return []
+        self.live_acc = 0.8
+        return [self.live_wait.pop(0)]
+
     # ---- 이벤트(키 입력 · 자동 연출 공용)
     def traffic_spike(self):
         self.src.add_spike(self.t)
         self.log("크리스마스 특가 오픈! 트래픽 급증 - 광장이 붐빈다", 213, "traffic")
 
+    def spawn_one(self):
+        """쥐 1마리 (키 n · ./market mouse). 실연동 중에는 outbreak 과 같이 만들지 않는다."""
+        if self.live is not None:
+            return self.outbreak(1)
+        n = len(self.mice)
+        self.spawn_mouse()
+        if len(self.mice) > n:
+            self.log("Sentry 신규 이슈 %s" % self.mice[-1].issue["id"], 203)
+
     def outbreak(self, n=5):
+        if self.live is not None:
+            self.log("Sentry 실연동 중 - 가짜 쥐는 만들지 않는다 (실제 미해결 이슈만 나온다)", 245)
+            return
         self.log("release-261225 배포 직후 쥐 떼 출몰! (신규 이슈 %d건)" % n, 203)
         for _ in range(n):
             self.spawn_mouse()
@@ -1050,11 +1095,13 @@ class World:
             for at, name, fn in ((12, "spike", self.traffic_spike), (45, "outbreak", self.outbreak)):
                 if ct >= at and (cyc, name) not in self.fired:
                     self.fired.add((cyc, name))
-                    fn()
+                    if not (name == "outbreak" and self.live is not None):
+                        fn()
 
         self.rps = self.src.rps(self.t) * self.svc[3]
-        for issue in self.src.poll_issues(self.t, dt, self.ratio, self.svc[4], self.svc_key):
-            self.log("Sentry 신규 이슈 %s: %s" % (issue["id"], issue["title"][:40]), 203)
+        for issue in self.poll_new_issues(dt):
+            self.log("Sentry %s이슈 %s: %s" % ("미해결 " if issue.get("live") else "신규 ", issue["id"],
+                                             issue["title"][:40]), 203)
             self.spawn_mouse(issue)
 
         self.hist_acc += dt
@@ -1110,8 +1157,7 @@ class World:
         elif op in ("outbreak", "bugs"):
             self.outbreak(int(arg) if arg.isdigit() else 5)
         elif op in ("mouse", "bug"):
-            self.spawn_mouse()
-            self.log("Sentry 신규 이슈 %s" % self.mice[-1].issue["id"], 203)
+            self.spawn_one()
         elif op == "human":
             self.human_clears()
         elif op == "auto":
@@ -1170,6 +1216,8 @@ class World:
                           "target": s.target.issue["id"] if s.target else None} for s in self.soldiers],
             "stats": dict(self.stats, mrs=self.mr - 1400),
             "auto": self.auto,
+            "live": {"on": self.live is not None, "source": "sentry" if self.live else "mock",
+                     "calls": self.live.calls if self.live else 0, "fails": self.live.fails if self.live else 0},
             "ai": {"on": self.ai is not None, "model": self.ai.model if self.ai else None,
                    "calls": self.ai.calls if self.ai else 0, "fails": self.ai.fails if self.ai else 0},
             "view": self.view,
@@ -1547,7 +1595,8 @@ def header(world, w, paused):
         x += dw(text)
         segs.append((" ", 7))
         x += 1
-    right = [("%s%s  MOCK  " % ("|| PAUSED  " if paused else "", "AUTO" if world.auto else "MANUAL"), 223)]
+    right = [("%s%s  %s  " % ("|| PAUSED  " if paused else "", "AUTO" if world.auto else "MANUAL",
+                              "LIVE SENTRY" if world.live is not None else "MOCK"), 223)]
     gap = w - seg_width(segs) - seg_width(right)
     return seg_line(segs + [(" " * max(0, gap), 7)] + right, w, 52)
 
@@ -2044,8 +2093,7 @@ def handle_key(world, ch, state):
     elif ch == "b":
         world.outbreak()
     elif ch == "n":
-        world.spawn_mouse()
-        world.log("Sentry 신규 이슈 %s" % world.mice[-1].issue["id"], 203)
+        world.spawn_one()
     elif ch == "h":
         world.human_clears()
     elif ch == "a":
@@ -2117,7 +2165,27 @@ def attach_ai(world, use_ai=True, replay=None):
         world.log("키워드 모드 - OPENAI_API_KEY 를 설정하면 AI 병정이 된다", 245, "all")
 
 
-def run_interactive(skip_intro=False, use_ai=True, replay=None):
+def attach_live(world, feed=None):
+    """--live: Sentry 미해결 이슈를 쥐로 쓴다. 설정이 없거나 첫 읽기가 실패하면 mock 으로 돈다."""
+    if sentry_live is None or (feed is None and not sentry_live.configured()):
+        world.live_fail = ".env 에 SENTRY_AUTH_TOKEN · SENTRY_ORG · SENTRY_PROJECT 필요"
+        world.log("Sentry 실연동 실패 (%s) - mock 으로 진행" % world.live_fail, 203, "all")
+        return False
+    feed = feed or sentry_live.SentryFeed()
+    try:
+        n = feed.fetch()
+    except Exception:  # noqa: BLE001
+        world.live_fail = feed.last_error
+        world.log("Sentry 실연동 실패 (%s) - mock 으로 진행" % world.live_fail, 203, "all")
+        return False
+    world.live = feed
+    feed.start()
+    world.log("🔌 Sentry 실연동 (%s/%s) - 미해결 이슈 %d건 읽음 · 읽기 전용 · 트래픽은 mock" % (
+        feed.org, feed.project, n), 141, "all")
+    return True
+
+
+def run_interactive(skip_intro=False, use_ai=True, replay=None, live=False):
     import termios
     import tty
 
@@ -2126,6 +2194,8 @@ def run_interactive(skip_intro=False, use_ai=True, replay=None):
     out = sys.stdout
     world = World()
     attach_ai(world, use_ai, replay)
+    if live:
+        attach_live(world)
     if skip_intro:
         world.set_view("menu")
     state = {"quit": False, "paused": False}
@@ -2240,7 +2310,7 @@ def frame_blocks(lines):
     return blocks
 
 
-def run_stream(w, h, skip_intro=False, use_ai=True, replay=None):
+def run_stream(w, h, skip_intro=False, use_ai=True, replay=None, live=False):
     """옆 패널(Claude Code mod)용: 화면 없이 돌며 프레임을 한 줄 JSON 으로 stdout 에 쓴다.
 
     입력은 .runtime/pane_cmd (한 줄에 '번호<TAB>명령', 번호가 커진 것만 처리):
@@ -2252,6 +2322,8 @@ def run_stream(w, h, skip_intro=False, use_ai=True, replay=None):
     import json
     world = World()
     attach_ai(world, use_ai, replay)
+    if live:
+        attach_live(world)
     if skip_intro:
         world.set_view("menu")
     state = {"quit": False, "paused": False}
@@ -2336,12 +2408,14 @@ def main():
     ap.add_argument("--no-ai", action="store_true", help="OPENAI_API_KEY 가 있어도 AI 병정을 끈다 (키워드·mock 판정)")
     ap.add_argument("--replay", nargs="?", const=REPLAY_DEFAULT, metavar="JSONL",
                     help="API 키 없이 녹화된 실제 AI 트리아지 결과를 재생 (기본 recordings/ai.jsonl)")
+    ap.add_argument("--live", action="store_true",
+                    help="쥐를 실제 Sentry 미해결 이슈로 (읽기 전용, .env 의 SENTRY_AUTH_TOKEN·SENTRY_ORG·SENTRY_PROJECT)")
     args = ap.parse_args()
     if args.seed is not None:
         R.seed(args.seed)
     if args.stream:
         w, h = (int(v) for v in args.size.lower().split("x"))
-        run_stream(w, h, args.skip_intro, not args.no_ai, args.replay)
+        run_stream(w, h, args.skip_intro, not args.no_ai, args.replay, args.live)
         return
     if args.snapshot is not None:
         w, h = (int(v) for v in args.size.lower().split("x"))
@@ -2361,7 +2435,7 @@ def main():
         return
     if not sys.stdin.isatty():
         sys.exit("터미널(TTY)에서 실행하세요. 미리보기는 --snapshot 옵션을 쓰세요.")
-    run_interactive(args.skip_intro, not args.no_ai, args.replay)
+    run_interactive(args.skip_intro, not args.no_ai, args.replay, args.live)
 
 
 if __name__ == "__main__":
