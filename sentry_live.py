@@ -53,6 +53,7 @@ def to_issue(row):
         "review_block": False,
         "live": True,
         "url": row.get("permalink") or "",
+        "culprit": str(row.get("culprit") or "")[:120],
         "count": row.get("count"),
     }
 

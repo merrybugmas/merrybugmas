@@ -19,6 +19,7 @@ case "${1:-help}" in
 ./market tell <병정> <명령>      병정(서브 에이전트)에게 말로 명령. 병정: 1·2·3·루돌프·진저·호두·모두
                                 예) tell 2 WEB-2B1 먼저 잡아 / tell 모두 보고 / tell 1 복귀 / tell 3 출동
 ./market history [ISSUE-ID|off] 잡은 쥐 기록 창 (ID 를 주면 그 쥐 줄 강조)
+./market prs                    병정이 실제로 연 PR 목록을 로그에 (--live + XMAS_FIX_REPO 일 때)
 ./market human                  우리 속(needs-human) 쥐 처리 완료
 ./market brief                  AI 운영 브리핑 (현황 3줄 + 권고, OPENAI_API_KEY 필요)
 ./market say <메시지>            대시보드 로그에 메시지 표시

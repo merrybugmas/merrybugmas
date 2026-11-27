@@ -28,7 +28,7 @@ import urllib.request
 DEFAULT_MODEL = "gpt-5-mini"
 
 KINDS = ["fixable", "noise", "needs-human"]
-INTENTS = ["catch", "noise", "human", "rest", "go", "report", "unknown"]
+INTENTS = ["catch", "noise", "human", "rest", "go", "report", "answer", "unknown"]
 
 ORDER_SCHEMA = {
     "type": "object",
@@ -74,11 +74,20 @@ intent:
   rest   = 복귀·대기·쉬어라
   go     = 출동·재개해라
   report = 지금 뭐 하는지 보고해라
+  answer = 질문이다 ("가장 큰 에러가 뭐였어?", "몇 마리 잡았어?", "PR 뭐 올렸어?" 등). 상황 JSON 으로 답한다
   unknown = 위에 해당하지 않음 (인사·칭찬·잡담 등)
 issue_id: catch/noise/human 이면 상황의 mice 중 하나의 id 를 그대로 쓴다.
   "제일 오래된 쥐", "검색 쪽 503 에러", "null 에러 난 거"처럼 묘사로 가리키면 mice 의 title·age_s·state 로 골라낸다.
   가리키는 쥐가 없으면 "".
-reply: 병정이 할 짧은 대답(한국어, 40자 이내, 씩씩한 병정 말투). intent 가 unknown 일 때 특히 자연스럽게.
+reply: 병정이 할 짧은 대답(한국어, 씩씩한 병정 말투). 보통 40자 이내.
+  intent 가 answer 면 상황의 history(처리한 쥐: outcome fixed=고침 / noise=쫓아냄 / human=담당자에게 넘김,
+  pr 은 실제로 연 GitHub PR 번호)·stats·mice 를 근거로 사람에게 말하듯 1~2문장, 80자 이내로 답한다.
+  - 필드 이름(history, stats, fixed, mice 등)이나 JSON 을 그대로 읽지 말고 우리말로 풀어 쓴다
+  - 에러는 제목을 통째로 읽지 말고 무엇이 문제인지 짧게 (예: "결제 확인 API 500 에러")
+  - 이슈 ID·PR 번호는 필요할 때 하나만 붙인다 (예: "WEB-F", "PR #2")
+  - "알겠습니다!" 같은 복명복창 없이 바로 답한다
+  - 상황에 없는 사실은 지어내지 말고 "기록에 없습니다"라고 한다
+  "가장 큰/심각한 에러"는 사람에게 넘긴 것(human)을 먼저, 없으면 가장 많이 나온 에러를 말한다.
 """
 
 TRIAGE_PROMPT = """너는 sentry-bot 의 트리아지 담당이다. 프론트엔드 서비스의 Sentry 이슈 하나를 보고 판정한다.

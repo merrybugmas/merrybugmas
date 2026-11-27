@@ -453,6 +453,109 @@ class LiveTrafficTest(unittest.TestCase):
         self.assertTrue(any("mock 으로 진행" in t for _, t, _, _ in w.logs))
 
 
+class RealFixTest(unittest.TestCase):
+    """병정의 실제 수정(PR): 가짜 OpenAI 패치 + 가짜 git/gh publish 로 (네트워크·git 안 씀)."""
+
+    def setUp(self):
+        import tempfile
+        import fixer
+        self.fixer = fixer
+        self.dir = tempfile.mkdtemp()
+        with open(os.path.join(self.dir, "app.js"), "w") as f:
+            f.write("function gifts(data) {\n  return data.items.map((g) => g.name); // 버그\n}\n")
+        self.published = []
+
+    def publish(self, issue, f, new, title, body):
+        self.published.append((issue["id"], f, new, title))
+        return {"pr": 7, "url": "https://github.com/x/demo/pull/7", "title": title, "branch": "b", "file": f, "diff": ""}
+
+    def make(self, answer, runtime=None):
+        ask = lambda *a: answer  # noqa: E731
+        return self.fixer.Fixer(ask=ask, repo=self.dir, files=["app.js"], runtime_dir=runtime, publish=self.publish)
+
+    def test_apply_patch_rules(self):
+        self.assertEqual(self.fixer.apply_patch("a b a", "b", "c"), "a c a")
+        for find in ("", "a", "zzz"):  # 패치 없음 · 두 곳 · 없는 곳
+            with self.assertRaises(ValueError):
+                self.fixer.apply_patch("a b a", find, "c")
+
+    def test_live_fixable_issue_opens_pr_once(self):
+        good = {"file": "app.js", "find": "return data.items.map((g) => g.name); // 버그",
+                "replace": "return (data.items || []).map((g) => g.name);", "title": "fix: items 없을 때 방어", "explanation": "e"}
+        fx = self.make(good, runtime=self.dir)
+        xm.R.seed(7)
+        w = xm.World()
+        w.auto = False
+        w.fixer = fx
+        w.start_stage(w.find_service("WEB"), "sentry")
+        xm.compose(w, 100, 30)
+        issue = {"id": "WEB-C", "title": "TypeError: Cannot read properties of undefined (reading 'map')",
+                 "kind": "fixable", "review_block": False, "live": True, "culprit": "Object.run(app)"}
+        w.spawn_mouse(issue)
+        self.assertTrue(wait_ai(w, lambda: any(r["id"] == "WEB-C" for r in w.history), timeout=8))
+        rec = [r for r in w.history if r["id"] == "WEB-C"][0]
+        self.assertEqual((rec["outcome"], rec["pr"], rec["url"]), ("fixed", 7, "https://github.com/x/demo/pull/7"))
+        self.assertEqual(len(self.published), 1)
+        self.assertIn("(data.items || [])", self.published[0][2])
+        self.assertTrue(any("PR #7" in t for _, t, _, _ in w.logs))
+        self.assertEqual(w.snapshot_state()["prs"][0]["issue"], "WEB-C")
+        fx.submit(issue, (0, dict(issue)))  # 같은 이슈를 다시 고치려 하면 새 PR 없이 기존 PR
+        self.assertEqual(len(self.published), 1)
+        self.assertTrue(fx.poll()[0][1]["reused"])
+
+    def test_failed_fix_goes_to_human_not_fake_mr(self):
+        bad = {"file": "app.js", "find": "없는 코드", "replace": "x", "title": "fix: x", "explanation": "e"}
+        xm.R.seed(7)
+        w = xm.World()
+        w.auto = False
+        w.fixer = self.make(bad)
+        w.start_stage(w.find_service("WEB"), "sentry")
+        xm.compose(w, 100, 30)
+        w.spawn_mouse({"id": "WEB-D", "title": "TypeError: x", "kind": "fixable", "review_block": False, "live": True,
+                       "culprit": "run(app)"})
+        w.spawn_mouse({"id": "WEB-S", "title": "TypeError: y", "kind": "fixable", "review_block": False, "live": True})
+        self.assertTrue(wait_ai(w, lambda: any(r["id"] == "WEB-S" for r in w.history), timeout=8))
+        self.assertEqual([r["outcome"] for r in w.history if r["id"] == "WEB-S"], ["human"])  # 스택 없는 이벤트
+        self.assertTrue(wait_ai(w, lambda: any(r["id"] == "WEB-D" for r in w.history), timeout=8))
+        rec = [r for r in w.history if r["id"] == "WEB-D"][0]
+        self.assertEqual((rec["outcome"], rec["pr"], rec["mr"]), ("human", None, None))
+        self.assertEqual(self.published, [])
+
+    def test_mock_issue_keeps_simulated_mr(self):
+        xm.R.seed(7)
+        w = xm.World()
+        w.auto = False
+        w.fixer = self.make({})
+        w.start_stage(w.find_service("WEB"), "sentry")
+        xm.compose(w, 100, 30)
+        w.spawn_mouse({"id": "WEB-M", "title": "RangeError: Invalid time value", "kind": "fixable", "review_block": False})
+        step(w, 25)
+        rec = [r for r in w.history if r["id"] == "WEB-M"][0]
+        self.assertEqual((rec["pr"], rec["mr"] is not None), (None, True))
+        self.assertEqual(self.published, [])
+
+
+class AnswerTest(unittest.TestCase):
+    def test_soldier_answers_question_from_history(self):
+        fake = FakeOpenAI({"soldier_order": lambda body: {
+            "soldier": "2", "intent": "answer", "issue_id": "",
+            "reply": "가장 많이 나온 건 RangeError 입니다 (%s건)" % json.loads(
+                body["input"].split("상황:\n", 1)[1])["stats"]["fixed"]}})
+        xm.R.seed(7)
+        w = xm.World()
+        w.auto = False
+        w.ai = ai.Brain(key="k", transport=fake)
+        w.start_stage(w.find_service("WEB"), "sentry")
+        xm.compose(w, 100, 30)
+        w.stats["fixed"] = 4
+        w.command("tell 진저 가장 큰 에러가 뭐였어?")
+        self.assertTrue(wait_ai(w, lambda: any("진저: 가장 많이" in t for _, t, _, _ in w.logs)))
+        self.assertIn("4건", w.soldiers[1].speech)
+        ctx = json.loads(fake.bodies[0]["input"].split("상황:\n", 1)[1])
+        self.assertIn("history", ctx)
+        self.assertIn("answer", fake.bodies[0]["text"]["format"]["schema"]["properties"]["intent"]["enum"])
+
+
 class ReplayTest(unittest.TestCase):
     def test_record_then_replay(self):
         import tempfile

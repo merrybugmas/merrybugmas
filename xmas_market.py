@@ -34,6 +34,10 @@ try:
 except ImportError:  # pragma: no cover
     sentry_live = None
 try:
+    import fixer  # 병정의 실제 수정: 코드 패치 → GitHub PR (--live, XMAS_FIX_REPO)
+except ImportError:  # pragma: no cover
+    fixer = None
+try:
     import traffic_live  # 트래픽 실연동 (/metrics 읽기, --live)
 except ImportError:  # pragma: no cover
     traffic_live = None
@@ -360,6 +364,36 @@ class MockSource:
         }
 
 
+def wrap_cols(text, width, lines=3):
+    """표시 폭(한글 2칸) width 로 줄바꿈. 최대 lines 줄, 넘치면 마지막 줄 끝을 … 로."""
+    out, cur = [], ""
+    for word in text.split(" "):
+        cand = (cur + " " + word) if cur else word
+        if dw(cand) <= width:
+            cur = cand
+            continue
+        if cur:
+            out.append(cur)
+        cur = word
+        while dw(cur) > width:  # 한 단어가 폭보다 길면 자른다
+            cut = ""
+            for ch in cur:
+                if dw(cut + ch) > width:
+                    break
+                cut += ch
+            out.append(cut)
+            cur = cur[len(cut):]
+    if cur:
+        out.append(cur)
+    if len(out) > lines:
+        out = out[:lines]
+        last = out[-1]
+        while last and dw(last + "…") > width:
+            last = last[:-1]
+        out[-1] = last + "…"
+    return out or [""]
+
+
 def base36(n):
     s = ""
     while n:
@@ -480,7 +514,7 @@ class Soldier:
 
     def say(self, world, text, color=183):
         """말풍선 + 작전 로그 한 줄 (명령에 대한 대답)."""
-        self.speech, self.speech_t = text, 4.0
+        self.speech, self.speech_t = text, max(4.0, 0.15 * len(text))  # 긴 대답은 더 오래 보인다
         world.log("💂 %s: %s" % (self.label, text), color)
 
     def release(self):
@@ -543,6 +577,11 @@ class Soldier:
         if self.state == "triage" and m.issue.get("ai") == "pending" and self.timer > -8:
             self.bubble = "? AI 판정 중"  # AI 판정이 올 때까지 최대 8초 더 기다린다
             return
+        if self.state == "fix" and m.issue.get("pr") == "pending" and self.timer > -150:
+            self.bubble = "PR 작성 중…"  # 실제 패치·push·PR 이 끝날 때까지 기다린다 (최대 150초)
+            if R.random() < 6 * dt:
+                world.spark(m.x + R.uniform(0, 14), m.y - R.uniform(0, 5))
+            return
 
         iid = m.issue["id"]
         if self.state == "triage":
@@ -556,12 +595,21 @@ class Soldier:
                 world.log("트리아지 %s: %s -> %s" % (iid, m.issue["title"][:38], kind), 229)
             if kind == "fixable":
                 self.state, self.timer = "fix", 2.6
+                world.start_real_fix(m, self)
             elif kind == "noise":
                 self.state, self.timer, self.bubble = "shoo", 0.9, "noise! shoo!"
             else:
                 self.state, self.timer, self.bubble = "flag", 1.1, "!! call human"
         elif self.state == "fix":
-            self.state, self.timer, self.bubble = "review", 1.1, "review..."
+            pr = m.issue.get("pr")
+            if pr == "pending":  # 150초 안에 안 끝났다
+                m.issue["pr"], m.issue["pr_err"] = None, "시간 초과"
+            if m.issue.get("pr_err"):  # 실제 수정을 못 했다: 사람에게 넘긴다 (MR 을 지어내지 않는다)
+                world.log("🔧 %s 자동 수정 실패 (%s) - 사람에게 넘김" % (iid, m.issue["pr_err"][:60]), 208)
+                m.issue["kind"] = "needs-human"
+                self.state, self.timer, self.bubble = "flag", 1.1, "!! 수정 실패"
+            else:
+                self.state, self.timer, self.bubble = "review", 1.1, "review..."
         elif self.state == "review":
             if m.issue["review_block"]:
                 m.issue["review_block"] = False
@@ -570,10 +618,17 @@ class Soldier:
                 world.log("독립 리뷰 block: %s 수정 반려 -> 다음 런 재시도" % iid, 208)
                 self.bubble, self.state, self.timer = "blocked :(", "after", 1.0
             else:
-                world.mr += 1
                 world.stats["fixed"] += 1
                 m.state, m.ttl = "dead", 0.4
                 world.poof(m.x + 7, m.y - 2)
+                pr = m.issue.get("pr")
+                if isinstance(pr, dict):  # 실제 PR
+                    world.log("🔀 PR #%d %s - %s (%s, %s)%s" % (pr["pr"], "이미 열려 있음" if pr.get("reused") else "생성",
+                                                              pr["title"], iid, self.label, "  " + pr["url"]), 46)
+                    world.record(m, "fixed", self, None, pr)
+                    self.bubble, self.state, self.timer = "PR #%d" % pr["pr"], "after", 1.0
+                    return
+                world.mr += 1
                 if m.issue.get("fix"):
                     world.log("MR !%d 생성 - fix: %s (%s, %s)" % (world.mr, m.issue["fix"], iid, self.label), 46)
                 else:
@@ -628,6 +683,7 @@ class World:
         self.stage_gen = 0  # 판이 바뀌면 +1. 이전 판에 보낸 AI 결과는 버린다
         self.ai = None  # ai.Brain: 있으면 병정 명령 해석·트리아지·브리핑을 OpenAI API 로 한다
         self.live = None  # sentry_live.SentryFeed: 있으면 쥐는 실제 Sentry 미해결 이슈다 (트래픽은 mock)
+        self.fixer = None  # fixer.Fixer: 있으면 실제 Sentry 이슈의 fixable 판정은 코드 패치 PR 로 이어진다
         self.traffic = None  # traffic_live.TrafficFeed: 있으면 rps 는 실제 서버 /metrics 에서 읽은 값이다
         self.traffic_down = False
         self.live_fail = None  # --live 를 켰는데 못 붙은 이유 (스테이지 시작 로그에 다시 보여 준다)
@@ -739,12 +795,33 @@ class World:
             self.set_view("intro")
 
     # ---- 잡은 쥐 기록
-    def record(self, m, outcome, s, mr=None):
+    def start_real_fix(self, m, s):
+        """실제 Sentry 이슈(--live)이고 수정 레포가 설정돼 있으면 코드 패치 PR 을 만들기 시작한다."""
+        if self.fixer is None or not m.issue.get("live") or m.issue.get("pr") is not None:
+            return
+        if not m.issue.get("culprit"):  # 스택이 없는 이벤트(직접 넣은 테스트 이벤트 등)는 어디를 고칠지 모른다
+            m.issue["pr"], m.issue["pr_err"] = None, "스택 정보 없음 - 고칠 위치를 모름"
+            return
+        m.issue["pr"] = "pending"
+        self.log("🔧 %s 이(가) %s 를 고치는 중 - %s 레포에 패치 작성" % (s.label, m.issue["id"], self.fixer.name), 117)
+        self.fixer.submit(m.issue, (self.stage_gen, m.issue))
+
+    def pump_fixer(self):
+        if self.fixer is None:
+            return
+        for (gen, issue), res, err in self.fixer.poll():
+            if err is not None:
+                issue["pr"], issue["pr_err"] = None, "%s: %s" % (type(err).__name__, str(err)[:80])
+            else:
+                issue["pr"] = res
+
+    def record(self, m, outcome, s, mr=None, pr=None):
         if outcome == "fixed":  # 처치한 쥐는 뒤쪽 우리로 날아간다
             self.flying.append([m.x + 4, m.y - 3, sum(1 for r in self.history if r["outcome"] == "fixed"), 0.0])
         self.history.append({"id": m.issue["id"], "title": m.issue["title"], "kind": m.issue["kind"],
                              "outcome": outcome, "soldier": s.idx + 1, "mr": mr, "t": self.t,
-                             "note": m.issue.get("fix") or m.issue.get("note") or ""})
+                             "pr": pr["pr"] if pr else None, "url": pr["url"] if pr else None,
+                             "note": (pr["title"] if pr else None) or m.issue.get("fix") or m.issue.get("note") or ""})
         self.history = self.history[-300:]
 
     def open_history(self, iid=None):
@@ -782,6 +859,10 @@ class World:
                       "age_s": round(self.t - m.issue.get("born_t", self.t)),
                       "chasedBy": None if m.claimed is None else m.claimed + 1}
                      for m in self.mice if m.state in ("roam", "held", "caged")],
+            # 질문에 답할 수 있게: 처리한 쥐 기록(최근 15건)과 누적 통계
+            "history": [{"id": r["id"], "title": r["title"][:70], "outcome": r["outcome"], "soldier": r["soldier"],
+                         "pr": r.get("pr"), "note": (r.get("note") or "")[:50]} for r in self.history[-15:]],
+            "stats": dict(self.stats),
         }
 
     def apply_ai_order(self, text, res):
@@ -791,7 +872,7 @@ class World:
         targets = self.find_soldiers("all" if who == "none" else who)
         self.log("🧠 해석: %s · %s%s" % ("모두" if who in ("all", "none") else "병정" + who, intent,
                                        " · " + iid if iid else ""), 141, "all")
-        if intent == "unknown":
+        if intent in ("unknown", "answer"):
             s = targets[0] if len(targets) == 1 else next((x for x in self.soldiers if not x.busy), self.soldiers[0])
             s.say(self, reply or "무슨 명령인지 모르겠어요 (예: WEB-2B1 잡아 / 복귀 / 출동 / 보고)")
             return
@@ -1122,6 +1203,7 @@ class World:
 
     def update(self, dt):
         self.pump_ai()
+        self.pump_fixer()
         if self.phase != "play":  # 타이틀·메뉴: 눈발만 움직인다
             self.intro_t += dt
             if self.tsize:
@@ -1234,6 +1316,12 @@ class World:
                 self.start_stage(idx, scn)
         elif op in ("tell", "order"):
             self.order(arg)
+        elif op == "prs":
+            prs = list(self.fixer.db.items()) if self.fixer else []
+            if not prs:
+                self.log("🔀 아직 연 PR 이 없다%s" % ("" if self.fixer else " (실제 수정 모드 꺼짐: --live + XMAS_FIX_REPO)"), 245, "all")
+            for iid, p in prs[-6:]:
+                self.log("🔀 PR #%d %s - %s  %s" % (p["pr"], iid, p["title"][:40], p["url"]), 46, "all")
         elif op == "history":
             if arg.lower() in ("off", "close", "닫기"):
                 self.show_hist, self.hist_sel = False, None
@@ -1262,7 +1350,9 @@ class World:
                       "note": m.issue.get("note", ""),
                       "state": m.state, "chasedBy": None if m.claimed is None else m.claimed + 1}
                      for m in self.mice if m.state != "dead"],
+            "prs": [dict(v, issue=k) for k, v in (self.fixer.db.items() if self.fixer else [])],
             "history": [{"id": r["id"], "outcome": r["outcome"], "soldier": r["soldier"], "mr": r["mr"],
+                         "pr": r.get("pr"), "url": r.get("url"),
                          "title": r["title"], "note": r.get("note", "")} for r in self.history[-20:]],
             "soldiers": [{"id": s.idx + 1, "name": s.name, "state": s.state, "off": s.off,
                           "handled": sum(1 for r in self.history if r["soldier"] == s.idx + 1),
@@ -1428,19 +1518,23 @@ class World:
                 bxx = min(max(0, int(x) + 3 - len(text) // 2), w - len(text))
                 cv.put(bxx, row, text, 16, 230, True)
                 row -= 1
-            if s.speech_t > 0:  # 명령에 대한 대답
-                text = " %s " % s.speech
-                bxx = min(max(0, int(x) + 3 - dw(text) // 2), max(0, w - dw(text)))
-                cv.put(bxx, row, text, 231, 53, True)
-                row -= 1
+            if s.speech_t > 0:  # 명령에 대한 대답 (길면 여러 줄로)
+                for part in reversed(wrap_cols(s.speech, min(46, max(16, w - 4)))):
+                    text = " %s " % part
+                    bxx = min(max(0, int(x) + 3 - dw(text) // 2), max(0, w - dw(text)))
+                    cv.put(bxx, row, text, 231, 53, True)
+                    row -= 1
             cv.put(x + 3, row, str(s.idx + 1), 25, None, True)
 
         # 위병소에서 대기 중인 병정의 대답은 위병소 위에
         row = max(0, top // 2 - 1)
         for s in self.soldiers:
             if not s.busy and s.speech_t > 0 and row >= 0:
-                cv.put(1, row, " %d %s: %s " % (s.idx + 1, s.name, s.speech), 231, 53, True)
-                row -= 1
+                parts = wrap_cols("%d %s: %s" % (s.idx + 1, s.name, s.speech), max(16, w - 6))
+                for part in reversed(parts):
+                    if row >= 0:
+                        cv.put(1, row, " %s " % part, 231, 53, True)
+                    row -= 1
 
         self.draw_trophy_cage(cv, top)
 
@@ -1501,7 +1595,9 @@ class World:
             cv.put(bx0, rows[1], pad("  아직 없음 - 병정이 처리하면 여기에 붙는다", bw), 244, 234)
         for r, row in zip(recent, rows[1:]):
             tag, col = OUTCOME_TAG[r["outcome"]]
-            if r["mr"]:
+            if r.get("pr"):
+                tag = "✔ PR#%d" % r["pr"]
+            elif r["mr"]:
                 tag = "✔ !%d" % r["mr"]
             text = " %s %s %d%s %s" % (pad(tag, 8), pad(r["id"], 10), r["soldier"],
                                          pad(SOLDIER_NAMES[(r["soldier"] - 1) % len(SOLDIER_NAMES)], 7), r["title"])
@@ -1944,7 +2040,9 @@ def issue_lines(world, w, h):
     # 남는 줄엔 최근에 잡은 쥐가 무슨 버그였는지
     for r in list(reversed(world.history))[:max(0, h - len(lines))]:
         tag, col = OUTCOME_TAG[r["outcome"]]
-        if r["mr"]:
+        if r.get("pr"):
+            tag = "✔ PR #%d" % r["pr"]
+        elif r["mr"]:
             tag = "✔ MR !%d" % r["mr"]
         lines.append(seg_line([(" ", 7), (pad(r["id"], 12), 245), (pad(r["kind"], 13), 240),
                                (pad("%s · %d" % (tag, r["soldier"]), 15), col), (r["title"], 240)], w, 233))
@@ -1977,7 +2075,9 @@ def history_lines(world, w, n):
                       (pad("%d %s" % (s.idx + 1, s.name), 12), 117), (pad("지금", 7), 250), (m.issue["title"], 250)], True))
     for r in reversed(hist):
         tag, col = OUTCOME_TAG[r["outcome"]]
-        if r["mr"]:
+        if r.get("pr"):
+            tag = "✔ PR#%d" % r["pr"]
+        elif r["mr"]:
             tag = "✔ !%d" % r["mr"]
         mm, ss = divmod(int(r["t"]), 60)
         sel = r["id"] == world.hist_sel
@@ -2273,6 +2373,20 @@ def attach_live_all(world):
         attach_traffic(world)
     if not did:
         live_failed(world, ".env 에 SENTRY_AUTH_TOKEN·SENTRY_ORG·SENTRY_PROJECT 또는 TRAFFIC_METRICS_URL 필요")
+    attach_fixer(world)
+
+
+def attach_fixer(world):
+    """--live + XMAS_FIX_REPO: 실제 Sentry 이슈를 병정이 코드 패치 PR 로 고친다. 실제 OpenAI 가 있어야 한다."""
+    if fixer is None or world.live is None or not fixer.configured():
+        return False
+    if world.ai is None or not hasattr(world.ai, "ask"):
+        world.log("🔧 실제 수정(PR)은 OpenAI API 가 켜져 있어야 한다 - 이번엔 MR 연출로 진행", 245, "all")
+        return False
+    world.fixer = fixer.Fixer(ask=world.ai.ask, runtime_dir=RUNTIME_DIR)
+    world.log("🔧 실제 수정 모드 - fixable 이슈는 %s 레포에 패치 PR 을 연다 (최대 %d개, 머지는 사람이)" % (
+        world.fixer.name, world.fixer.max_prs), 141, "all")
+    return True
 
 
 def run_interactive(skip_intro=False, use_ai=True, replay=None, live=False):
