@@ -25,6 +25,11 @@
   / "다들 뭐 하고 있어?" → `./market tell 모두 보고` 후 `./market status` 의 `soldiers`·`log` 로 답한다.
 - 처리한 건은 `status` 의 `history`(최근 20건: id·outcome fixed/noise/human·soldier·mr) 에 쌓인다.
   "지금까지 뭐 잡았어?" → history 로 답하고, 화면으로 보여 달라면 `./market history`.
+- 실제 수정(PR): `--live` 에 `XMAS_FIX_REPO` 가 설정돼 있으면 병정이 실제 Sentry 이슈를 고쳐 GitHub PR 을 연다.
+  `status` 의 `prs`(issue·pr 번호·url·title)와 `history[].pr`·`history[].url` 에 남는다. "PR 뭐 올라갔어?" → 이 값으로 번호와 URL 을 답하고,
+  대시보드에는 `./market prs`. **PR 머지는 사람이 한다** — 머지·승인·브랜치 삭제를 하지 않는다.
+- 병정에게 묻는 질문("진저야 가장 큰 에러가 뭐였어?")도 `./market tell <문장>` 으로 넘긴다. 병정이 기록을 보고 말풍선으로 답한다.
+  병정의 답은 모델이 쓴 것이니, 채팅에서 숫자를 말할 때는 `./market status` 로 확인한다.
 
 - AI 병정: 대시보드에 `OPENAI_API_KEY` 가 있으면 병정이 OpenAI API 로 문장을 해석하고(묘사로 가리킨 쥐도) 이슈를 판정한다.
   `status` 의 `ai.on` 으로 확인. 판정 근거는 `mice[].note`·`history[].note`, 판정 대기 중인 쥐는 `kind: "pending"`.

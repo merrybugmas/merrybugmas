@@ -155,7 +155,7 @@ python3 -m unittest discover -s tests -v                             # 스모크
 ```
 
 ## 테스트
-`tests/test_smoke.py` (표준 라이브러리 unittest, 30개, 1.5초):
+`tests/test_smoke.py` (표준 라이브러리 unittest, 35개, 약 7초):
 - 6개 서비스 × 3개 화면(18개 조합) + 타이틀·메뉴·기록 창이 오류 없이 그려지는지
 - 키워드 병정 명령 (지목·복귀·보고)
 - AI 병정을 가짜 OpenAI 응답으로: 묘사로 가리킨 쥐 해석, 트리아지가 mock 판정을 바꾸고 MR 로그에 수정 요약이 붙는지, 브리핑, 요청이 strict JSON Schema 인지, **API 실패 시 키워드로 폴백**하는지
@@ -163,6 +163,8 @@ python3 -m unittest discover -s tests -v                             # 스모크
 - 녹화·재생: 녹화한 트리아지 결과가 `--replay` 에서 그대로 나오는지
 - Sentry 실연동을 가짜 Sentry 응답으로: 실제 이슈가 중복 없이 쥐가 되는지, 가짜 쥐가 섞이지 않는지, AI 가 실제 제목을 판정하는지, **읽기 실패 시 mock 으로 폴백**하는지
 - 트래픽 실연동을 가짜 `/metrics` 와 가짜 시계로: 카운터 증가분으로 rps 를 내는지, 서버 재시작·읽기 끊김 처리, 가짜 급증을 섞지 않는지, 5xx 비율·응답 시간·Web Vitals 를 읽고 없는 항목은 비워 두는지
+- 실제 수정을 가짜 OpenAI 패치와 가짜 git/gh 로: 실연동 이슈는 PR 이 되고 같은 이슈로 두 번 열지 않는지, 패치가 안 맞거나 스택이 없으면 사람에게 넘기는지(MR 을 지어내지 않는지), mock 이슈는 연출 MR 그대로인지
+- 병정 질의응답: 질문이 answer 로 해석되고 처리 기록이 함께 넘어가는지
 
 권장 환경: macOS / Linux, 256색 터미널 100x30 이상. macOS · Python 3.9 에서 실행을 확인했고, Linux · Python 3.8 은 문법 호환만 확인했다. Windows 는 WSL 에서 실행한다 (`termios` 사용).
 
@@ -179,7 +181,7 @@ python3 xmas_market.py --live --no-ai    # OpenAI 호출 없이 키워드 판정
 
 - `.env`: `SENTRY_AUTH_TOKEN`(권한은 event:read 만) · `SENTRY_ORG` · `SENTRY_PROJECT`. 선택: `SENTRY_URL`(기본 `https://sentry.io`) · `SENTRY_LIMIT`(기본 20) · `SENTRY_POLL`(초, 기본 15)
 - 15초마다 미해결 이슈를 읽어 처음 본 것만 쥐로 만든다. AI 가 켜져 있으면 그 **실제 제목**을 OpenAI API 가 판정한다
-- Sentry 에는 아무것도 쓰지 않는다. 병정의 판정·fix·MR 은 대시보드 안의 연출이고 Sentry 이슈 상태는 그대로다
+- Sentry 에는 아무것도 쓰지 않는다. Sentry 이슈 상태는 그대로다 (병정의 수정은 아래처럼 GitHub PR 로 나간다)
 - 실연동 중에는 `b`·`n`·자동 쥐 떼가 가짜 쥐를 만들지 않는다. 설정이 없거나 첫 읽기가 실패하면 원인을 로그에 남기고 mock 으로 돈다
 
 ### 트래픽
@@ -196,10 +198,40 @@ python3 xmas_market.py --live --no-ai    # OpenAI 호출 없이 키워드 판정
 - 데모 웹앱 [merrybugmas/demo-web](https://github.com/merrybugmas/demo-web): 일부러 버그를 심어 둔 상점 페이지. 버튼을 누르면 진짜 브라우저 에러 7종이 Sentry 브라우저 SDK 를 거쳐 이슈가 되고, 대시보드가 그것을 읽어 쥐로 만드는 것까지 확인했다. 같은 서버의 `/metrics` 로 트래픽도 확인했다: 부하 생성기로 25 → 110 → 25 rps 를 주자 대시보드 rps 가 그대로 따라가고 줄이 인파 경보까지 늘었다. 요청의 15% 를 503 API 로 보내자 5xx 비율이 14% 대로 표시됐고, 브라우저가 보고한 LCP·CLS·TTFB 도 표시됐다
 - `python3 tools/sentry_seed.py`: 평가셋 제목으로 테스트 이벤트를 직접 넣는 스크립트(`SENTRY_DSN` 필요). 12건을 보내 11건이 이슈가 됐다
 
+### 병정의 실제 수정 → GitHub PR
+`--live` 이고 `.env` 에 `XMAS_FIX_REPO`(고칠 레포의 로컬 경로)가 있으면, 병정이 fixable 로 판정한 **실제 Sentry 이슈를 코드로 고쳐 PR 을 연다** (`fixer.py`).
+
+```
+fixable 판정 → OpenAI 가 레포 소스(XMAS_FIX_FILES, 기본 app.js·server.py)를 읽고 최소 패치(찾아 바꾸기)를 만든다
+→ 패치가 정확히 한 곳에 맞는지 · 고친 파일이 문법상 맞는지(node --check / py_compile) 확인
+→ 별도 git worktree 의 새 브랜치 sentry-bot/<이슈>-<시각> 에 커밋 → push → gh pr create
+→ 작전 로그 "🔀 PR #n 생성 … URL", 기록 창 "✔ PR#n", ./market prs, ./market status 의 prs · history[].url
+```
+
+- **머지는 사람이 한다.** 기본 브랜치에 직접 푸시하지 않고, 쓰고 있는 체크아웃도 건드리지 않는다
+- 같은 이슈는 PR 을 한 번만 연다 (`.runtime/prs.json`). 한 번 실행에 최대 `XMAS_FIX_MAX`(기본 5)개
+- 고칠 위치를 모르는 이슈(스택이 없는 이벤트)나 패치가 맞지 않으면 MR 을 지어내지 않고 **사람에게 넘긴다** (우리에 가둠)
+- mock 이슈는 지금처럼 `MR !14xx` 연출이다. 실제 PR 은 실연동 이슈에만 열린다
+- 필요: `git`, `gh`(로그인), 대상 레포 push 권한, 실제 OpenAI API (`--replay`·`--no-ai` 에서는 꺼진다)
+
+**확인 (2026-11-27)**: 데모 웹앱의 실제 Sentry 이슈 7건으로 돌려 49초 만에 PR 3개가 열렸다 —
+[#1](https://github.com/merrybugmas/demo-web/pull/1) 장바구니 쿠폰 null 방어,
+[#2](https://github.com/merrybugmas/demo-web/pull/2) 선물 목록 items 확인,
+[#3](https://github.com/merrybugmas/demo-web/pull/3) 배송일 Invalid Date 방지. 셋 다 에러가 난 줄만 고친 1~3줄 수정이다.
+나머지는 백엔드 5xx 2건·HTML 을 JSON 으로 읽는 에러 1건을 사람에게, 광고 스크립트 1건을 noise 로 보냈다. OpenAI 호출 10회, 실패 0.
+
+### 병정에게 묻기
+AI 가 켜져 있으면 병정이 질문에도 답한다. 명령 해석에 최근 처리 기록 15건과 누적 통계를 같이 넘긴다.
+```bash
+./market tell '진저야 가장 큰 에러가 뭐였어?'
+# 💂 병정2 진저: 결제 확인 API에서 500 에러가 가장 심각했습니다. 담당자에게 이관됐습니다 (WEB-F).
+```
+기록에 없는 것은 지어내지 않도록 프롬프트로 막았지만, 답은 모델이 쓰므로 틀릴 수 있다. 숫자는 `./market status` 로 확인한다.
+
 ## 더 연동할 때
 - 트래픽: 지금은 서버 한 대의 `/metrics` 를 직접 읽는다. 여러 서버를 합치려면 Grafana(또는 Prometheus) 쿼리 결과를 읽게 바꾼다 (아직 안 했다)
 - 트리아지 입력을 이슈 제목에서 스택트레이스·관련 소스까지 넓힌다
-- 병정의 fix·review·MR 은 아직 연출이다. 실연동에서는 병정 하나를 sentry-bot(Codex) 런 하나에 붙여 런 로그와 state 로 움직이게 하고 `tell` 명령을 런에 넘긴다
+- 병정의 review 는 아직 연출이다(실제 PR 은 사람이 리뷰한다). 병정 하나를 sentry-bot(Codex) 런 하나에 붙이면 더 큰 수정도 맡길 수 있다
 
 ## 라이선스
 MIT — [LICENSE](LICENSE)
