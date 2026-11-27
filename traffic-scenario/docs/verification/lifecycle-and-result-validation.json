@@ -1,0 +1,33 @@
+{
+  "checked_at": "2026-11-27T07:07:37.739415+00:00",
+  "changes": [
+    "Always close target telemetry and thread pool on initialization, application or shutdown failure",
+    "Always close control manager when catalog initialization fails",
+    "Validate search results before emitting request.succeeded"
+  ],
+  "validation": {
+    "command": ".venv/bin/python -m pytest -q",
+    "passed": 35,
+    "new_regression_cases": 7,
+    "control_openapi_unchanged": true,
+    "target_openapi_unchanged": true
+  },
+  "delivery": "Existing project folder updated without creating a zip",
+  "not_checked": [
+    "Real 1000-request load test was not rerun"
+  ],
+  "source_sha256": {
+    "backend/__init__.py": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+    "backend/__main__.py": "a40a2286dc34feab403b51233084661e8160c5e6d538265ab151973a83ec1ad4",
+    "backend/catalog.py": "53f800f408b268dc18733d52d026e5cbdc2c05db0ca13f3f5635462c5c1b5881",
+    "backend/common.py": "c44fe6fc60dad1ab26be22565e585c78b5cd1ee5c8f53036a46e16e2639a6119",
+    "backend/comparison.py": "145dcb986a26f1d3890abbac19d811046db1e8d07f12cfb077e22df0618871e9",
+    "backend/config.py": "bdc0c17ef78551637accdf169c9c48c514fcafd744e1c9f8623d4cb5cf9f6d19",
+    "backend/control.py": "37bfcc724b6c6218008f31fdc299d8c835c442e2ae3547bcd1176a773936df9b",
+    "backend/loadgen.py": "210ef41c2dbfac33ef17d36768bbd3ed3a08e5eff1d805b405ca6b7ee380a837",
+    "backend/manager.py": "4814d61f9f703aa0c3ec05a45027471578fbc5f5cd4c087c524034e581734521",
+    "backend/models.py": "31c8ee59b092005d39df02f9cabead935a5e2cc82663b396bae82169066b4e79",
+    "backend/store.py": "ce33cec3737930c7c7c57b3d59e66b7718abf7c6630209888bbd443be49ab22c",
+    "backend/target.py": "5c7e6b1f20ff859065a868848ada889f313183ebed0aa6e91e17e04fe49c6f51"
+  }
+}

@@ -1,0 +1,102 @@
+{
+  "source": "Merry_Bug_Mas_API_명세서_v0.2.xlsx",
+  "sha256": "1740e8a95b8e5d4ca791e13820a744f6a11df5a8a96cf3c655980b6c1eff1293",
+  "endpoints": [
+    {
+      "id": "API-01",
+      "server": "검색 8001",
+      "name": "안내 상품 검색",
+      "method": "get",
+      "path": "/api/guide/search",
+      "success": 200
+    },
+    {
+      "id": "API-02",
+      "server": "제어 8000",
+      "name": "부하 실험 시작",
+      "method": "post",
+      "path": "/api/runs",
+      "success": 202
+    },
+    {
+      "id": "API-03",
+      "server": "제어 8000",
+      "name": "실험 중지",
+      "method": "post",
+      "path": "/api/runs/{run_id}/stop",
+      "success": 202
+    },
+    {
+      "id": "API-04",
+      "server": "제어 8000",
+      "name": "실험 상태와 지표 조회",
+      "method": "get",
+      "path": "/api/runs/{run_id}",
+      "success": 200
+    },
+    {
+      "id": "API-05",
+      "server": "제어 8000",
+      "name": "마켓 이벤트 조회",
+      "method": "get",
+      "path": "/api/runs/{run_id}/events",
+      "success": 200
+    },
+    {
+      "id": "API-06",
+      "server": "제어 8000",
+      "name": "고객 요청 상세 조회",
+      "method": "get",
+      "path": "/api/runs/{run_id}/requests/{request_id}",
+      "success": 200
+    },
+    {
+      "id": "API-07",
+      "server": "제어 8000",
+      "name": "진단 로그 조회",
+      "method": "get",
+      "path": "/api/runs/{run_id}/logs",
+      "success": 200
+    },
+    {
+      "id": "API-08",
+      "server": "제어 8000",
+      "name": "개선 전후 비교",
+      "method": "post",
+      "path": "/api/comparisons",
+      "success": 200
+    },
+    {
+      "id": "API-09",
+      "server": "제어 8000",
+      "name": "에이전트 작업 단계 전달",
+      "method": "post",
+      "path": "/api/agent/progress",
+      "success": 200
+    },
+    {
+      "id": "API-10",
+      "server": "제어 8000",
+      "name": "안내 검색 서버 재시작",
+      "method": "post",
+      "path": "/api/service/restart",
+      "success": 202
+    },
+    {
+      "id": "INT-01",
+      "server": "제어 8000",
+      "name": "서버 이벤트 일괄 수집",
+      "method": "post",
+      "path": "/internal/runs/{run_id}/events",
+      "success": 200
+    },
+    {
+      "id": "INT-02",
+      "server": "제어 8000",
+      "name": "고객 측정값 일괄 수집",
+      "method": "post",
+      "path": "/internal/runs/{run_id}/measurements",
+      "success": 200
+    }
+  ]
+}

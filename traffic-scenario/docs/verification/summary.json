@@ -1,0 +1,22 @@
+{
+  "date": "2026-11-27",
+  "api_contract_sha256": "1740e8a95b8e5d4ca791e13820a744f6a11df5a8a96cf3c655980b6c1eff1293",
+  "unit_tests": 25,
+  "unit_tests_passed": true,
+  "live_checks": [
+    "1000 requests",
+    "same-plan replay",
+    "server restart with control continuity",
+    "event cursor pagination",
+    "request detail and logs",
+    "agent progress deduplication",
+    "unconfigured policy rejection",
+    "stop and dropped reconciliation"
+  ],
+  "not_implemented": [
+    "Textual frontend",
+    "Codex/MCP agent",
+    "automatic code/schema apply or rollback"
+  ],
+  "performance_note": "Integration checks, not a repeated performance-improvement benchmark. No artificial production sleep or model call."
+}

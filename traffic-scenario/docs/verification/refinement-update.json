@@ -1,0 +1,31 @@
+{
+  "checked_at": "2026-11-27T07:02:28.433369+00:00",
+  "changes": [
+    "Close catalog SQLite connections after commit or rollback",
+    "Check candidate results against baseline answers",
+    "Reuse one run list for comparison cohorts",
+    "Remove unused result storage and imports"
+  ],
+  "validation": {
+    "command": ".venv/bin/python -m pytest -q",
+    "passed": 28
+  },
+  "not_checked": [
+    "Real 1000-request load test was not rerun"
+  ],
+  "source_sha256": {
+    "backend/__init__.py": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+    "backend/__main__.py": "a40a2286dc34feab403b51233084661e8160c5e6d538265ab151973a83ec1ad4",
+    "backend/catalog.py": "53f800f408b268dc18733d52d026e5cbdc2c05db0ca13f3f5635462c5c1b5881",
+    "backend/common.py": "c44fe6fc60dad1ab26be22565e585c78b5cd1ee5c8f53036a46e16e2639a6119",
+    "backend/comparison.py": "145dcb986a26f1d3890abbac19d811046db1e8d07f12cfb077e22df0618871e9",
+    "backend/config.py": "bdc0c17ef78551637accdf169c9c48c514fcafd744e1c9f8623d4cb5cf9f6d19",
+    "backend/control.py": "e6523f472827d32c65dc7174af8c54842851ba78f06a8510f6d856397703d28c",
+    "backend/loadgen.py": "210ef41c2dbfac33ef17d36768bbd3ed3a08e5eff1d805b405ca6b7ee380a837",
+    "backend/manager.py": "4814d61f9f703aa0c3ec05a45027471578fbc5f5cd4c087c524034e581734521",
+    "backend/models.py": "e76355a6b8c4985f289234829378486b6320fdaef2d458de1d36b8d257af3f5c",
+    "backend/responses.py": "712953f17d6b19fec062b9c16e5df053acb71833c9b0bfb078df1d4a96e313c3",
+    "backend/store.py": "ce33cec3737930c7c7c57b3d59e66b7718abf7c6630209888bbd443be49ab22c",
+    "backend/target.py": "033090c6ee7a6d620000184dd2cc9e79d45816ec9d10f9ff26639cc0d01d7616"
+  }
+}

@@ -1,0 +1,192 @@
+{
+  "before": {
+    "run_id": "run-541394bd206346969bae",
+    "status": "completed",
+    "source_run_id": null,
+    "config": {
+      "scenario_id": "surge",
+      "request_count": 1000,
+      "arrival_duration_s": 2.0,
+      "seed": 42,
+      "client_timeout_ms": 5000
+    },
+    "started_at": "2026-11-27T06:26:00.435Z",
+    "finished_at": "2026-11-27T06:26:08.201Z",
+    "last_seq": 15652,
+    "server_counts": {
+      "received": 840,
+      "queued": 0,
+      "processing": 0,
+      "succeeded": 840,
+      "failed": 0,
+      "cancelled": 0
+    },
+    "client_counts": {
+      "planned": 1000,
+      "sent": 1000,
+      "success": 834,
+      "failed": 166,
+      "pending": 0,
+      "dropped": 0
+    },
+    "metrics": {
+      "avg_response_ms": 2362.478796380256,
+      "p95_response_ms": 4798.57958399225,
+      "failure_rate": 0.166,
+      "success_rps": 109.7072001149524
+    },
+    "telemetry_complete": true,
+    "agent_phase": "idle",
+    "artifact": {
+      "code_revision": "sha256:861d0ec58349c79ba26ce50e351fe32ef1c2f936f2ce5800aaea780494276824",
+      "schema_hash": "sha256:cf5528fd6220d1079464d6a651f85244f4e1eb7cfa2f61a99b4d0b659c7dd54b",
+      "dataset_hash": "sha256:f5f46ca110c31c72a0d04f9bb09dc3d24348b70dbadd2b65941d9d574bb157c7",
+      "request_plan_hash": "sha256:43adc0c105da98c2ca4700b7e9b1247d669d2650342d5acb2f90ba81e35a32ee",
+      "runtime_config_hash": "sha256:e43182b159a672162b19b106b46bf629d74e3e47da3568514c34ea85e17c8a22",
+      "warmup_policy": "reference-query-warmup-v1"
+    }
+  },
+  "replay": {
+    "run_id": "run-f7611553cb8c4cb4aefc",
+    "status": "completed",
+    "source_run_id": "run-541394bd206346969bae",
+    "config": {
+      "scenario_id": "surge",
+      "request_count": 1000,
+      "arrival_duration_s": 2.0,
+      "seed": 42,
+      "client_timeout_ms": 5000
+    },
+    "started_at": "2026-11-27T06:26:09.550Z",
+    "finished_at": "2026-11-27T06:26:17.217Z",
+    "last_seq": 23224,
+    "server_counts": {
+      "received": 820,
+      "queued": 0,
+      "processing": 0,
+      "succeeded": 820,
+      "failed": 0,
+      "cancelled": 0
+    },
+    "client_counts": {
+      "planned": 1000,
+      "sent": 1000,
+      "success": 807,
+      "failed": 193,
+      "pending": 0,
+      "dropped": 0
+    },
+    "metrics": {
+      "avg_response_ms": 2304.5619217548497,
+      "p95_response_ms": 4748.709000064991,
+      "failure_rate": 0.193,
+      "success_rps": 107.18586359323173
+    },
+    "telemetry_complete": true,
+    "agent_phase": "idle",
+    "artifact": {
+      "code_revision": "sha256:861d0ec58349c79ba26ce50e351fe32ef1c2f936f2ce5800aaea780494276824",
+      "schema_hash": "sha256:cf5528fd6220d1079464d6a651f85244f4e1eb7cfa2f61a99b4d0b659c7dd54b",
+      "dataset_hash": "sha256:f5f46ca110c31c72a0d04f9bb09dc3d24348b70dbadd2b65941d9d574bb157c7",
+      "request_plan_hash": "sha256:43adc0c105da98c2ca4700b7e9b1247d669d2650342d5acb2f90ba81e35a32ee",
+      "runtime_config_hash": "sha256:e43182b159a672162b19b106b46bf629d74e3e47da3568514c34ea85e17c8a22",
+      "warmup_policy": "reference-query-warmup-v1"
+    }
+  },
+  "event_count": 7726,
+  "detail": {
+    "run_id": "run-541394bd206346969bae",
+    "request_id": "run-541394bd206346969bae-customer-0001",
+    "customer_id": "customer-0001",
+    "query": {
+      "category": "cookie",
+      "max_price": 10000
+    },
+    "server_status": "succeeded",
+    "client_outcome": "success",
+    "received_at": "2026-11-27T06:26:00.609000Z",
+    "started_at": "2026-11-27T06:26:00.609000Z",
+    "finished_at": "2026-11-27T06:26:00.623000Z",
+    "queue_wait_ms": 0.08158397395163774,
+    "current_wait_ms": null,
+    "processing_ms": 14.13354102987796,
+    "server_total_ms": 14.215125003829598,
+    "client_elapsed_ms": 34.86104204785079,
+    "http_status": 200,
+    "error_code": null,
+    "items": [
+      {
+        "product_id": 3281,
+        "name": "크리스마스 쿠키 3281",
+        "price": 1000,
+        "shop_name": "쿠키 가게 7",
+        "location": "광장 2구역"
+      },
+      {
+        "product_id": 6505,
+        "name": "크리스마스 쿠키 6505",
+        "price": 1000,
+        "shop_name": "쿠키 가게 6",
+        "location": "광장 2구역"
+      },
+      {
+        "product_id": 7416,
+        "name": "크리스마스 쿠키 7416",
+        "price": 1000,
+        "shop_name": "쿠키 가게 17",
+        "location": "광장 1구역"
+      },
+      {
+        "product_id": 13957,
+        "name": "크리스마스 쿠키 13957",
+        "price": 1000,
+        "shop_name": "쿠키 가게 8",
+        "location": "광장 6구역"
+      },
+      {
+        "product_id": 22848,
+        "name": "크리스마스 쿠키 22848",
+        "price": 1000,
+        "shop_name": "쿠키 가게 24",
+        "location": "광장 1구역"
+      },
+      {
+        "product_id": 24905,
+        "name": "크리스마스 쿠키 24905",
+        "price": 1000,
+        "shop_name": "쿠키 가게 6",
+        "location": "광장 2구역"
+      },
+      {
+        "product_id": 31973,
+        "name": "크리스마스 쿠키 31973",
+        "price": 1000,
+        "shop_name": "쿠키 가게 24",
+        "location": "광장 6구역"
+      },
+      {
+        "product_id": 35208,
+        "name": "크리스마스 쿠키 35208",
+        "price": 1000,
+        "shop_name": "쿠키 가게 9",
+        "location": "광장 1구역"
+      },
+      {
+        "product_id": 40426,
+        "name": "크리스마스 쿠키 40426",
+        "price": 1000,
+        "shop_name": "쿠키 가게 2",
+        "location": "광장 3구역"
+      },
+      {
+        "product_id": 45288,
+        "name": "크리스마스 쿠키 45288",
+        "price": 1000,
+        "shop_name": "쿠키 가게 14",
+        "location": "광장 1구역"
+      }
+    ]
+  },
+  "restart_verified": true,
+  "unconfigured_policy_rejected": true
+}

@@ -1,0 +1,20 @@
+{
+  "added_blank_lines": {
+    "__init__.py": 0,
+    "__main__.py": 10,
+    "catalog.py": 11,
+    "common.py": 4,
+    "comparison.py": 18,
+    "config.py": 4,
+    "control.py": 4,
+    "loadgen.py": 26,
+    "manager.py": 51,
+    "models.py": 21,
+    "responses.py": 2,
+    "store.py": 91,
+    "target.py": 31
+  },
+  "nonblank_lines_unchanged": true,
+  "ast_unchanged": true,
+  "validation": "Python syntax and unchanged AST verified. Tests not rerun because the project virtual environment is absent."
+}
