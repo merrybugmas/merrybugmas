@@ -6,6 +6,8 @@ import type { Register } from 'claude-code'
  * 게임 화면 위에 투명 입력판(pad.tsx)을 덮어, 한 번 클릭하면 방향키·Enter·클릭이 게임으로 간다.
  *
  *   /merrybugmas            패널 열기 (게임을 타이틀부터 새로 시작, 실연동 --live: .env 에 설정된 Sentry·트래픽만 붙고 나머지는 mock)
+ *   /merrybugmas mock       mock 모드: Sentry·트래픽 둘 다 mock 데이터 (.env 의 실연동 설정을 무시한다)
+ *   /merrybugmas ... noai   OpenAI 를 부르지 않는다 (키워드 판정·규칙 엘프). mock 이나 live 뒤에 붙인다
  *   /merrybugmas stop       게임 끄고 패널 닫기
  *
  * 패널 → 게임 입력은 <프로젝트>/.runtime/pane_cmd ('번호<TAB>명령' 줄들, 번호가 커진 것만 읽힌다).
@@ -27,6 +29,8 @@ let child: { id: number; stop: () => void } | null = null
 let starting = false
 let childSeq = 0
 let projectDir: string | null = null
+/** 실행 모드: live = --live (실연동), mock = 둘 다 mock. noai = OpenAI 끔. 다음 /merrybugmas 까지 유지 */
+let mode: { live: boolean; noai: boolean } = { live: true, noai: false }
 let size = { cols: 0, rows: 0 }
 const seenEvent: Record<string, number> = { keys: 0, pad: 0 }
 let cmdSeq = 0
@@ -101,7 +105,8 @@ async function startChild($: any) {
   const rows = Math.max(22, size.rows || 30)
   latest = { cols: 0, blocks: [], note: 'MERRY BUGMAS 시작 중…' }
   const stream = $.process.spawn({
-    argv: ['/usr/bin/env', 'python3', `${dir}/${SCRIPT}`, '--stream', '--live', '--size', `${cols}x${rows}`],
+    argv: ['/usr/bin/env', 'python3', `${dir}/${SCRIPT}`, '--stream', ...(mode.live ? ['--live'] : []),
+      ...(mode.noai ? ['--no-ai'] : []), '--size', `${cols}x${rows}`],
     cwd: dir,
     env: await childEnv($),
   })
@@ -148,8 +153,8 @@ async function registerCommand($: any, tries: number): Promise<void> {
   try {
     await $.command.register({
       name: 'merrybugmas',
-      description: 'MERRY BUGMAS 대시보드를 옆 패널에 띄운다 (stop = 끄기)',
-      argumentHint: '[stop]',
+      description: 'MERRY BUGMAS 대시보드를 옆 패널에 띄운다 (mock = 둘 다 mock 데이터, noai = OpenAI 끔, stop = 끄기)',
+      argumentHint: '[mock|live] [noai] | stop',
       aliases: ['xmas', 'marrybugmas'],
       immediate: true,
     })
@@ -178,12 +183,15 @@ export const register: Register = on => {
       await $.ui.close({ id: PANE })
       return { text: 'MERRY BUGMAS 를 끄고 패널을 닫았습니다.' }
     }
-    // 열 때마다 타이틀부터 새로 시작한다
+    // 열 때마다 타이틀부터 새로 시작한다. 인자: mock/live (기본 live), noai
+    const words = e.args.trim().toLowerCase().split(/\s+/).filter(Boolean)
+    mode = { live: !words.some(w => /^(mock|목|모크)$/.test(w)), noai: words.some(w => /^(noai|no-ai)$/.test(w)) }
     stop()
     latest = { cols: 0, blocks: [], note: null }
     await start($)
     await $.ui.open({ id: PANE, title: TITLE, focus: true })
-    return { text: projectDir ? 'MERRY BUGMAS 를 타이틀부터 새로 시작했습니다. 게임 화면을 한 번 클릭하면 방향키·Enter 로 조작합니다 (Esc 는 입력창으로).' : latest.note ?? '' }
+    const how = `${mode.live ? '실연동(--live: .env 에 설정된 Sentry·트래픽)' : 'mock 모드(Sentry·트래픽 모두 mock)'}${mode.noai ? ' · OpenAI 끔' : ''}`
+    return { text: projectDir ? `MERRY BUGMAS 를 타이틀부터 새로 시작했습니다 - ${how}. 게임 화면을 한 번 클릭하면 방향키·Enter 로 조작합니다 (Esc 는 입력창으로).` : latest.note ?? '' }
   })
 
   // 메시지를 보낼 때도 등록을 확인한다 (세션이 붙은 뒤라 확실히 된다)
