@@ -25,6 +25,11 @@ import sys
 import time
 import unicodedata
 
+try:
+    import ai  # 병정의 두뇌 (OpenAI API). 키가 없으면 키워드·mock 판정으로 돈다
+except ImportError:  # pragma: no cover
+    ai = None
+
 FPS = 12
 PEAK_RPS = 3000
 LOG_H = 6  # 로그 영역 높이(테두리 1 + 본문 5)
@@ -430,6 +435,11 @@ ORDER_WORDS = [
     ("go", ("출동", "가자", "일해", "시작", "재개", "나가", "go", "start")),
 ]
 OUTCOME_WORD = {"fixed": "MR 생성", "noise": "noise 쫓아냄", "human": "사람 호출"}
+def kind_word(issue):
+    """화면에 쓸 판정: AI 판정을 기다리는 중이면 '판정 중'."""
+    return "판정 중" if issue.get("ai") == "pending" else issue["kind"]
+
+
 STATE_WORD = {"walk": "추격", "triage": "트리아지", "fix": "수정", "review": "리뷰", "shoo": "쫓는", "flag": "사람 호출",
               "after": "마무리"}
 
@@ -522,11 +532,20 @@ class Soldier:
                 world.spark(m.x + R.uniform(0, 14), m.y - R.uniform(0, 5))
         if self.timer > 0:
             return
+        if self.state == "triage" and m.issue.get("ai") == "pending" and self.timer > -8:
+            self.bubble = "? AI 판정 중"  # AI 판정이 올 때까지 최대 8초 더 기다린다
+            return
 
         iid = m.issue["id"]
         if self.state == "triage":
             kind = m.issue["kind"]
-            world.log("트리아지 %s: %s -> %s" % (iid, m.issue["title"][:38], kind), 229)
+            m.issue["triaged"] = True
+            if m.issue.get("ai") == "pending":  # 8초 안에 AI 판정이 안 오면 mock 판정으로 간다
+                m.issue["ai"] = "timeout"
+            if m.issue.get("note"):
+                world.log("🧠 트리아지 %s -> %s: %s" % (iid, kind, m.issue["note"]), 229)
+            else:
+                world.log("트리아지 %s: %s -> %s" % (iid, m.issue["title"][:38], kind), 229)
             if kind == "fixable":
                 self.state, self.timer = "fix", 2.6
             elif kind == "noise":
@@ -547,7 +566,10 @@ class Soldier:
                 world.stats["fixed"] += 1
                 m.state, m.ttl = "dead", 0.4
                 world.poof(m.x + 7, m.y - 2)
-                world.log("MR !%d 생성 - fix: %s 처치 완료 (%s)" % (world.mr, iid, self.label), 46)
+                if m.issue.get("fix"):
+                    world.log("MR !%d 생성 - fix: %s (%s, %s)" % (world.mr, m.issue["fix"], iid, self.label), 46)
+                else:
+                    world.log("MR !%d 생성 - fix: %s 처치 완료 (%s)" % (world.mr, iid, self.label), 46)
                 world.record(m, "fixed", self, world.mr)
                 self.bubble, self.state, self.timer = "MR !%d" % world.mr, "after", 1.0
         elif self.state == "shoo":
@@ -595,6 +617,8 @@ class World:
         self.flying = []  # 처치된 쥐가 뒤쪽 우리로 날아가는 중: [x, y, 우리 안 번호, 경과]
         self.show_hist, self.hist_sel = False, None  # 기록 창을 열었는지 · 강조할 이슈 ID
         self.auto = True
+        self.stage_gen = 0  # 판이 바뀌면 +1. 이전 판에 보낸 AI 결과는 버린다
+        self.ai = None  # ai.Brain: 있으면 병정 명령 해석·트리아지·브리핑을 OpenAI API 로 한다
         self.fired = set()
         self.phase = "intro"  # intro(타이틀) / menu(스테이지 고르기) / play
         self.intro_t = 0.0
@@ -630,6 +654,7 @@ class World:
             self.service, self.peak = svc, PEAK_RPS * svc[3]
             self.mice, self.queue, self.passing, self.particles = [], [], [], []
             self.soldiers = [Soldier(i, self) for i in range(3)]
+            self.stage_gen += 1
             self.stats = {"fixed": 0, "noise": 0, "human": 0, "blocked": 0}
             self.history, self.show_hist, self.hist_sel, self.flying = [], False, None, []
             self.mr, self.admitted, self.admit_acc = 1400, 0, 0.0
@@ -662,7 +687,8 @@ class World:
         if outcome == "fixed":  # 처치한 쥐는 뒤쪽 우리로 날아간다
             self.flying.append([m.x + 4, m.y - 3, sum(1 for r in self.history if r["outcome"] == "fixed"), 0.0])
         self.history.append({"id": m.issue["id"], "title": m.issue["title"], "kind": m.issue["kind"],
-                             "outcome": outcome, "soldier": s.idx + 1, "mr": mr, "t": self.t})
+                             "outcome": outcome, "soldier": s.idx + 1, "mr": mr, "t": self.t,
+                             "note": m.issue.get("fix") or m.issue.get("note") or ""})
         self.history = self.history[-300:]
 
     def open_history(self, iid=None):
@@ -684,7 +710,39 @@ class World:
         return [s for s in self.soldiers if s.name in who]
 
     def order(self, text, who=None):
-        """자연어 명령 한 줄을 병정이 알아듣고 움직인다. who 가 없으면 문장에서 찾는다 ('병정2 …', '진저 …', '모두 …')."""
+        """자연어 명령 한 줄. AI 가 켜져 있으면 OpenAI 로 해석하고(키워드에 없는 말도), 아니면 키워드로 알아듣는다."""
+        if self.ai is not None and who is None:
+            self.log("📣 명령: %s  (🧠 해석 중…)" % text.strip()[:50], 229, "all")
+            self.ai.submit("order", {"text": text, "context": self.ai_context()}, (self.stage_gen, text))
+            return
+        self.order_keywords(text, who)
+
+    def ai_context(self):
+        """명령 해석용 상황 요약: 병정과 살아 있는 쥐."""
+        return {
+            "soldiers": [{"id": s.idx + 1, "name": s.name, "state": s.state, "off": s.off,
+                          "target": s.target.issue["id"] if s.target else None} for s in self.soldiers],
+            "mice": [{"id": m.issue["id"], "title": m.issue["title"], "kind": kind_word(m.issue), "state": m.state,
+                      "age_s": round(self.t - m.issue.get("born_t", self.t)),
+                      "chasedBy": None if m.claimed is None else m.claimed + 1}
+                     for m in self.mice if m.state in ("roam", "held", "caged")],
+        }
+
+    def apply_ai_order(self, text, res):
+        who, intent = res.get("soldier", "all"), res.get("intent", "unknown")
+        iid = (res.get("issue_id") or "").strip().upper()
+        reply = (res.get("reply") or "").strip()
+        targets = self.find_soldiers("all" if who == "none" else who)
+        self.log("🧠 해석: %s · %s%s" % ("모두" if who in ("all", "none") else "병정" + who, intent,
+                                       " · " + iid if iid else ""), 141, "all")
+        if intent == "unknown":
+            s = targets[0] if len(targets) == 1 else next((x for x in self.soldiers if not x.busy), self.soldiers[0])
+            s.say(self, reply or "무슨 명령인지 모르겠어요 (예: WEB-2B1 잡아 / 복귀 / 출동 / 보고)")
+            return
+        self.dispatch(targets, intent, [iid] if iid else [], text)
+
+    def order_keywords(self, text, who=None):
+        """키워드로 알아듣는 명령 (AI 가 꺼졌거나 실패했을 때)."""
         if who is None:
             m = re.match(r"\s*(병정\s*\d|\d\s*번|\d|all|모두|전원|%s)\s*[,:야]?\s*(.*)" % "|".join(SOLDIER_NAMES), text)
             who, text = (m.group(1), m.group(2)) if m else ("all", text)
@@ -697,11 +755,14 @@ class World:
         intent = next((name for name, words in ORDER_WORDS if any(k in low for k in words)), None)
         if intent is None and ids:
             intent = "catch"
+        self.log("📣 명령 → %s: %s" % (", ".join(s.label for s in targets), text.strip()[:50]), 229, "all")
+        self.dispatch(targets, intent, ids, text)
+
+    def dispatch(self, targets, intent, ids, text):
         if intent in ("catch", "noise", "human") and len(targets) > 1:
             # 쥐 한 마리는 한 병정이: 놀고 있는 병정, 그다음 복귀 중인 병정, 그다음 번호 순
             rank = {"home": 0, "return": 1, "walk": 2}
             targets = [min(targets, key=lambda s: (s.off, rank.get(s.state, 3), s.idx))]
-        self.log("📣 명령 → %s: %s" % (", ".join(s.label for s in targets), text.strip()[:50]), 229, "all")
         for s in targets:
             self.do_order(s, intent, ids)
 
@@ -725,6 +786,7 @@ class World:
                 return
             if intent != "catch":
                 m.issue["kind"] = "noise" if intent == "noise" else "needs-human"
+                m.issue["ai"] = "manual"  # 사람이 정한 판정은 늦게 온 AI 판정이 덮지 않는다
                 m.issue["review_block"] = False
             prev = m.assigned
             m.assigned, m.priority, s.off = s.idx, True, False
@@ -829,6 +891,11 @@ class World:
         if sum(1 for m in self.mice if m.state != "dead") >= 16:
             return
         issue = issue or self.src.make_issue(self.svc_key)
+        issue.setdefault("born_t", self.t)
+        if self.ai is not None:  # mock 판정 대신 AI 가 제목을 보고 판정한다 (오기 전까지 병정은 트리아지에서 기다림)
+            issue["ai"] = "pending"
+            self.ai.submit("triage", {"id": issue["id"], "title": issue["title"], "service": self.svc_key},
+                           (self.stage_gen, issue))
         self.mice.append(Mouse(self, issue))
         if self.view == "traffic":
             self.unseen += 1
@@ -912,7 +979,60 @@ class World:
         self.passing = [p for p in self.passing if p[0] < self.gate_x + 3]  # 카운터 뒤 가게 안으로
 
     # ---- 갱신
+    def pump_ai(self):
+        """백그라운드 OpenAI 호출 결과를 반영한다 (메인 스레드에서만 world 를 바꾼다)."""
+        if self.ai is None:
+            return
+        for kind, ctx, res, err in self.ai.poll():
+            gen, obj = ctx
+            try:
+                self._apply_ai(kind, gen, obj, res, err)
+            except Exception as e:  # noqa: BLE001 — 이상한 응답이 대시보드를 죽이지 않게
+                self.log("🧠 결과 처리 실패 (%s)" % type(e).__name__, 245, "all")
+
+    def _apply_ai(self, kind, gen, obj, res, err):
+        if kind == "triage":
+            issue = obj
+            if issue.get("ai") != "pending" or issue.get("triaged") or gen != self.stage_gen:
+                if issue.get("ai") == "pending":
+                    issue["ai"] = "timeout"
+                return
+            if err is not None:
+                issue["ai"] = "failed"  # mock 판정 그대로
+                return
+            issue.update(kind=res["kind"], note=res["reason"][:60], fix=res["fix"][:50], ai="done")
+            if res["kind"] != "fixable":
+                issue["review_block"] = False
+            return
+        if gen != self.stage_gen:  # 판이 바뀌었다
+            return
+        if kind == "order":
+            if err is not None:
+                self.log("🧠 해석 실패 (%s) - 키워드로 처리" % type(err).__name__, 245, "all")
+                self.order_keywords(obj)
+            else:
+                self.apply_ai_order(obj, res)
+        elif kind == "brief":
+            if err is not None:
+                self.log("🧠 브리핑 실패 (%s)" % type(err).__name__, 245, "all")
+            else:
+                for line in res["summary"][:3]:
+                    self.log("🧠 " + line, 159, "all")
+                self.log("🧠 권고: " + res["advice"], 213, "all")
+
+    def brief(self):
+        if self.ai is None:
+            st = self.snapshot_state()
+            live = [m for m in st["mice"]]
+            self.log("📋 브리핑: rps %s (%s) · 미해결 쥐 %d · MR %d · 사람 대기 %d  (AI 꺼짐: OPENAI_API_KEY)" % (
+                format(st["traffic"]["rps"], ","), st["traffic"]["crowd"], len(live), st["stats"]["mrs"],
+                sum(1 for m in live if m["state"] == "caged")), 159, "all")
+            return
+        self.log("🧠 브리핑 준비 중…", 245, "all")
+        self.ai.submit("brief", self.snapshot_state(), (self.stage_gen, None))
+
     def update(self, dt):
+        self.pump_ai()
         if self.phase != "play":  # 타이틀·메뉴: 눈발만 움직인다
             self.intro_t += dt
             if self.tsize:
@@ -1021,6 +1141,8 @@ class World:
                 self.show_hist, self.hist_sel = False, None
             else:
                 self.open_history(arg.upper() or None)
+        elif op in ("brief", "briefing", "브리핑"):
+            self.brief()
         elif op == "say":
             self.log("💬 codex: " + arg, 183, "all")
         else:
@@ -1036,16 +1158,20 @@ class World:
                         "queue_offscreen": self.queue_offscreen() if self.w else 0,
                         "admitted": self.admitted, "crowd": label,
                         "history_rps": [int(v) for v in self.hist[-20:]]},
-            "mice": [{"id": m.issue["id"], "title": m.issue["title"], "kind": m.issue["kind"],
+            "mice": [{"id": m.issue["id"], "title": m.issue["title"],
+                      "kind": "pending" if m.issue.get("ai") == "pending" else m.issue["kind"],
+                      "note": m.issue.get("note", ""),
                       "state": m.state, "chasedBy": None if m.claimed is None else m.claimed + 1}
                      for m in self.mice if m.state != "dead"],
             "history": [{"id": r["id"], "outcome": r["outcome"], "soldier": r["soldier"], "mr": r["mr"],
-                         "title": r["title"]} for r in self.history[-20:]],
+                         "title": r["title"], "note": r.get("note", "")} for r in self.history[-20:]],
             "soldiers": [{"id": s.idx + 1, "name": s.name, "state": s.state, "off": s.off,
                           "handled": sum(1 for r in self.history if r["soldier"] == s.idx + 1),
                           "target": s.target.issue["id"] if s.target else None} for s in self.soldiers],
             "stats": dict(self.stats, mrs=self.mr - 1400),
             "auto": self.auto,
+            "ai": {"on": self.ai is not None, "model": self.ai.model if self.ai else None,
+                   "calls": self.ai.calls if self.ai else 0, "fails": self.ai.fails if self.ai else 0},
             "view": self.view,
             "log": ["%02d:%02d %s" % (divmod(int(ts), 60) + (text,)) for ts, text, _, _ in self.logs[-12:]],
         }
@@ -1082,7 +1208,8 @@ class World:
     def issue_segs(self, m):
         st, sc = self.issue_status(m)
         return [("★" if m.priority else " ", 220), (pad(m.issue["id"], 12), 231, True),
-                (pad(m.issue["kind"], 13), KIND_COL[m.issue["kind"]]), (pad(st, 15), sc), (m.issue["title"], 244)]
+                (pad(kind_word(m.issue), 13), KIND_COL.get(kind_word(m.issue), 141)), (pad(st, 15), sc),
+                (m.issue["title"], 244)]
 
     def draw(self, view="traffic"):
         market, bugs = view == "traffic", view == "sentry"
@@ -1739,7 +1866,7 @@ def history_lines(world, w, n):
     for m in live:  # 클릭한 쥐가 아직 처리 중이면 맨 위에
         s = world.soldiers[m.claimed]
         rows.append(([(" " + pad("… 처리 중", 10), 117, True), (pad(m.issue["id"], 12), 231, True),
-                      (pad(m.issue["kind"], 13), KIND_COL[m.issue["kind"]]),
+                      (pad(kind_word(m.issue), 13), KIND_COL.get(kind_word(m.issue), 141)),
                       (pad("%d %s" % (s.idx + 1, s.name), 12), 117), (pad("지금", 7), 250), (m.issue["title"], 250)], True))
     for r in reversed(hist):
         tag, col = OUTCOME_TAG[r["outcome"]]
@@ -1750,7 +1877,8 @@ def history_lines(world, w, n):
         rows.append(([(" " + pad(tag, 10), col, True), (pad(r["id"], 12), 231, sel),
                       (pad(r["kind"], 13), KIND_COL.get(r["kind"], 250)),
                       (pad("%d %s" % (r["soldier"], SOLDIER_NAMES[(r["soldier"] - 1) % len(SOLDIER_NAMES)]), 12), 250),
-                      (pad("%02d:%02d" % (mm, ss), 7), 244), (r["title"], 250 if sel else 244)], sel))
+                      (pad("%02d:%02d" % (mm, ss), 7), 244),
+                      (r["title"] + ("  🧠 " + r["note"] if r.get("note") else ""), 250 if sel else 244)], sel))
     if not rows:
         rows.append(([("   아직 잡은 쥐가 없습니다 - 병정이 처리하면 여기에 쌓입니다", 244)], False))
     room = n - len(lines)
@@ -1970,7 +2098,16 @@ def handle_input(world, buf, state):
     return ""
 
 
-def run_interactive(skip_intro=False):
+def attach_ai(world, use_ai=True):
+    """OPENAI_API_KEY 가 있으면 병정에게 두뇌(OpenAI API)를 붙인다."""
+    if use_ai and ai is not None and ai.available():
+        world.ai = ai.Brain()
+        world.log("🧠 AI 병정 모드 (%s) - 명령 해석·트리아지·브리핑" % world.ai.model, 141, "all")
+    else:
+        world.log("키워드 모드 - OPENAI_API_KEY 를 설정하면 AI 병정이 된다", 245, "all")
+
+
+def run_interactive(skip_intro=False, use_ai=True):
     import termios
     import tty
 
@@ -1978,6 +2115,7 @@ def run_interactive(skip_intro=False):
     old = termios.tcgetattr(fd)
     out = sys.stdout
     world = World()
+    attach_ai(world, use_ai)
     if skip_intro:
         world.set_view("menu")
     state = {"quit": False, "paused": False}
@@ -2092,7 +2230,7 @@ def frame_blocks(lines):
     return blocks
 
 
-def run_stream(w, h, skip_intro=False):
+def run_stream(w, h, skip_intro=False, use_ai=True):
     """옆 패널(Claude Code mod)용: 화면 없이 돌며 프레임을 한 줄 JSON 으로 stdout 에 쓴다.
 
     입력은 .runtime/pane_cmd (한 줄에 '번호<TAB>명령', 번호가 커진 것만 처리):
@@ -2103,6 +2241,7 @@ def run_stream(w, h, skip_intro=False):
     """
     import json
     world = World()
+    attach_ai(world, use_ai)
     if skip_intro:
         world.set_view("menu")
     state = {"quit": False, "paused": False}
@@ -2184,12 +2323,13 @@ def main():
     ap.add_argument("--service", default="ALL", help="--snapshot 스테이지 서비스 (%s)" % ", ".join(s[0] for s in SERVICES))
     ap.add_argument("--skip-intro", action="store_true", help="타이틀 없이 메뉴부터")
     ap.add_argument("--stream", action="store_true", help="옆 패널용: 프레임을 JSON 줄로 stdout 에 (크기는 --size)")
+    ap.add_argument("--no-ai", action="store_true", help="OPENAI_API_KEY 가 있어도 AI 병정을 끈다 (키워드·mock 판정)")
     args = ap.parse_args()
     if args.seed is not None:
         R.seed(args.seed)
     if args.stream:
         w, h = (int(v) for v in args.size.lower().split("x"))
-        run_stream(w, h, args.skip_intro)
+        run_stream(w, h, args.skip_intro, not args.no_ai)
         return
     if args.snapshot is not None:
         w, h = (int(v) for v in args.size.lower().split("x"))
@@ -2209,7 +2349,7 @@ def main():
         return
     if not sys.stdin.isatty():
         sys.exit("터미널(TTY)에서 실행하세요. 미리보기는 --snapshot 옵션을 쓰세요.")
-    run_interactive(args.skip_intro)
+    run_interactive(args.skip_intro, not args.no_ai)
 
 
 if __name__ == "__main__":

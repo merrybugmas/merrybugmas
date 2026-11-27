@@ -23,6 +23,10 @@
 - 처리한 건은 `status` 의 `history`(최근 20건: id·outcome fixed/noise/human·soldier·mr) 에 쌓인다.
   "지금까지 뭐 잡았어?" → history 로 답하고, 화면으로 보여 달라면 `./market history`.
 
+- AI 병정: 대시보드에 `OPENAI_API_KEY` 가 있으면 병정이 OpenAI API 로 문장을 해석하고(묘사로 가리킨 쥐도) 이슈를 판정한다.
+  `status` 의 `ai.on` 으로 확인. 판정 근거는 `mice[].note`·`history[].note`, 판정 대기 중인 쥐는 `kind: "pending"`.
+  AI 가 켜져 있으면 사용자 말을 굳이 키워드로 바꾸지 말고 `./market tell <문장>` 으로 그대로 넘겨도 된다.
+
 ## 지시 보내기 (실행하면 대시보드에 바로 보인다)
 - `./market focus <ISSUE-ID>` — 그 이슈부터 처치
 - `./market human` — 사람이 우리 속 쥐를 처리했다고 알림
@@ -30,6 +34,7 @@
 - `./market start <서비스> [traffic|sentry|overview]` — 그 서비스로 스테이지 시작. 서비스: `ALL WEB SEARCH RESUME DISPLAY MOBILE`.
   "검색 쪽 버그 보여줘" → `./market start SEARCH sentry`. 서비스를 바꾸면 새 판(쥐·통계 초기화)이다
 - `./market view traffic` · `./market view sentry` · `./market view overview` · `./market view menu` — 화면 전환. "트래픽 보여줘", "쥐 잡는 거 보여줘", "개요로", "메뉴로" 같은 말에 쓴다
+- `./market brief` — AI 운영 브리핑(현황 3줄 + 권고)을 대시보드에 띄운다. "지금 상황 요약해 줘" 에 쓴다. AI 가 꺼져 있으면 숫자 한 줄
 - `./market say <짧은 메시지>` — 대시보드 로그에 말풍선처럼 표시 (답변 요약을 한 줄로 띄울 때)
 - `./market auto off` · `./market pause` / `resume`
 
