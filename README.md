@@ -7,9 +7,23 @@
 화면은 전부 반블록 문자 `▀` 로 그린 픽셀아트다. **지금은 mock 데이터 PoC.**
 
 ```bash
-python3 xmas_market.py          # 대시보드 (60x22 이상, 256색, 의존성 없음)
+python3 xmas_market.py          # 대시보드 (60x22 이상, 256색, 의존성 없음, API 키 없이도 동작)
+export OPENAI_API_KEY=...       # (선택) 넣으면 병정이 OpenAI API 로 명령을 해석하고 이슈를 판정한다
 ./run-with-codex.sh             # 왼쪽 Codex 채팅 + 오른쪽 대시보드 (tmux 분할, 없으면 Terminal 창 2개)
+./run-with-codex.sh auto        # 왼쪽 Codex 자율 운영자: 사람 없이 Codex 가 30초마다 판단해 병정을 지휘
 ```
+
+## 왜 만들었나
+장애가 나면 운영자는 Grafana(트래픽)·Sentry(에러)·자동 수정 봇(sentry-bot)의 진행 상황을 각각 다른 화면에서 맞춰 봐야 한다.
+"지금 무엇이 터졌고, 봇은 무엇을 처리 중이며, 사람이 봐야 할 건 무엇인가"를 한눈에 보기 어렵고, 봇이 무슨 판단을 했는지는 더 안 보인다.
+
+MERRY BUGMAS 는 이 셋을 **한 장면**으로 합친다. 트래픽은 줄, 에러는 쥐, 봇은 병정이라 숫자를 읽지 않아도 상황이 보이고,
+병정(에이전트)이 왜 그렇게 판정했는지가 말풍선·기록으로 남는다. 그리고 운영자는 **채팅으로 에이전트를 지휘**한다.
+
+## 30초 체험 (키·로그인 없이)
+1. `python3 xmas_market.py` → 아무 키 → 메뉴에서 `WEB` · `🐭 Sentry 버그` · `▶ START`
+2. `b` 를 눌러 쥐 떼(배포 직후 신규 이슈 5건)를 풀면 병정이 출동해 triage → fix → review → MR 로 처리한다
+3. `r` 로 잡은 쥐 기록, `1` 로 트래픽 대기열, `0` 으로 개요. 다른 터미널에서 `./market tell 진저 보고`
 
 | 운영 지표 | 마켓 장면 |
 |---|---|
@@ -72,13 +86,28 @@ python3 xmas_market.py          # 대시보드 (60x22 이상, 256색, 의존성 
 ```
 
 병정은 `1`·`2`·`3`, `병정2`, 이름, `모두` 로 부른다. 이름 없이 쥐를 지목하면 놀고 있는 병정 하나가 맡는다.
-지금은 키워드로 알아듣는 시뮬레이션이다.
+`OPENAI_API_KEY` 가 없으면 키워드로 알아듣는다. 있으면 아래처럼 OpenAI API 가 해석한다.
+
+## AI 구조 — 운영자(Codex)가 병정(OpenAI API)을 지휘한다
+
+![AI 구조: Codex 운영자 → ./market → 대시보드 ↔ OpenAI API](docs/images/architecture.png)
+
+| 층 | 누가 | 하는 일 |
+|---|---|---|
+| 운영자 | **Codex** (`codex` / `codex exec`) | `AGENTS.md` 를 도구 사용 규약으로 읽는다. 먼저 `./market status` 로 숫자를 확인하고 답한 뒤, 병정에게 명령하고 대시보드에 요약을 띄운다. `auto` 모드에선 사람 없이 30초마다 스스로 판단한다 |
+| 병정의 두뇌 | **OpenAI API** (`ai.py`) | ① **명령 해석**: "진저한테 503 에러 난 쥐부터 처리하라고 해" → `{병정 2, catch, MOBILE-2C1}`. 키워드에 없는 말·묘사로 가리킨 쥐도 현황 JSON 에서 찾는다. 잡담엔 병정 말투로 대답 ② **트리아지**: 이슈 제목을 보고 fixable / noise / needs-human 판정 + 근거 + MR 수정 요약 ③ **브리핑**: `./market brief` → 현황 3줄 + 권고 1줄 |
+| 시각화 | 대시보드 | AI 의 판정 근거가 작전 로그(🧠)·잡은 쥐 기록에 남는다. 판정을 기다리는 쥐는 `판정 중` 으로 보인다 |
+
+- 출력은 JSON Schema(strict)로 받아 그대로 게임 동작에 연결한다. 호출은 백그라운드 스레드라 화면이 멈추지 않는다.
+- 키가 없거나 호출이 실패하면 키워드 해석·mock 판정으로 돌아간다 (작전 로그에 "키워드로 처리"). `--no-ai` 로 끌 수도 있다.
+- 환경변수: `OPENAI_API_KEY`, `XMAS_AI_MODEL`(기본 `gpt-5-mini`), `XMAS_AI_EFFORT`(기본 `low`), `XMAS_AI=off`.
+- `AGENTS.md` 는 채팅 에이전트용 운영 규약이다. 어떤 명령이 있고, 답하기 전에 무엇을 읽고, 무엇을 고치면 안 되는지를 적어 두면 Codex 가 그대로 따른다.
 
 ## 채팅 ↔ 대시보드
 Codex·Claude Code 는 이 폴더에서 `AGENTS.md` 를 읽고, 대시보드와는 `.runtime/` 파일로 이어진다.
 - 대시보드는 1초마다 `.runtime/state.json` 에 현황(단계·서비스·트래픽·쥐·병정·잡은 쥐 기록·로그)을 쓴다. 채팅은 `./market status` 로 읽고 숫자로 답한다.
 - 채팅이 `./market start WEB sentry`, `./market tell …`, `./market say …`, `./market outbreak 3` 등을 실행하면 `.runtime/cmd` 를 거쳐 바로 반영된다.
-- 사람도 같은 명령을 쓸 수 있다. 목록은 `./market help`.
+- 사람도 같은 명령을 쓸 수 있다. 목록은 `./market help`. `./market brief` 는 AI 운영 브리핑.
 - Claude Code 옆 패널에 띄울 때는 `python3 xmas_market.py --stream --size 90x40` 이 프레임을 JSON 줄로 내보내고, `.runtime/pane_cmd` 로 키·클릭을 받는다.
 
 ## 키
@@ -103,10 +132,25 @@ Codex·Claude Code 는 이 폴더에서 `AGENTS.md` 를 읽고, 대시보드와�
 python3 xmas_market.py --skip-intro                                  # 타이틀 없이 메뉴부터
 python3 xmas_market.py --snapshot 50 --size 100x30 --view sentry --service WEB [--plain]   # 한 프레임 미리보기
 python3 tools/screenshots.py                                         # README 이미지 다시 만들기 (Pillow 필요)
+python3 tools/diagram.py                                             # AI 구조도 다시 그리기 (Pillow 필요)
+python3 -m unittest discover -s tests -v                             # 스모크 테스트 (네트워크·키 없이)
 ```
+
+## 테스트
+`tests/test_smoke.py` (표준 라이브러리 unittest, 21개, 1.5초):
+- 6개 서비스 × 3개 화면(18개 조합) + 타이틀·메뉴·기록 창이 오류 없이 그려지는지
+- 키워드 병정 명령 (지목·복귀·보고)
+- AI 병정을 가짜 OpenAI 응답으로: 묘사로 가리킨 쥐 해석, 트리아지가 mock 판정을 바꾸고 MR 로그에 수정 요약이 붙는지, 브리핑, 요청이 strict JSON Schema 인지, **API 실패 시 키워드로 폴백**하는지
+- 경합·이상 응답: 사람이 내린 판정을 늦게 온 AI 판정이 덮지 않는지, AI 판정이 8초 안에 안 오면 mock 판정으로 넘어가는지, 스키마를 벗어난 응답·429 재시도·판이 바뀐 뒤 도착한 결과
+
+권장 환경: macOS / Linux, Python 3.8+, 256색 터미널 100x30 이상. Windows 는 WSL 에서 실행한다 (`termios` 사용).
 
 ## 실연동할 때
 `MockSource` 만 바꾸면 된다.
 - `rps(t)`: Grafana(또는 Prometheus) 쿼리 결과
 - `poll_issues(...)`: Sentry 신규 미해결 이슈. `kind` 는 sentry-bot state 의 triage 결과
-- 병정은 지금 시뮬레이션이다. 실연동에서는 병정 하나를 sentry-bot 런 하나에 붙여, 런 로그와 state 로 움직이게 하고 `tell` 명령을 런에 넘긴다
+- 트리아지는 이미 OpenAI API 로 한다(`ai.py`). 실연동에서는 이슈 제목 대신 스택트레이스·관련 소스까지 넣는다
+- 병정의 fix·review·MR 은 아직 연출이다. 실연동에서는 병정 하나를 sentry-bot(Codex) 런 하나에 붙여 런 로그와 state 로 움직이게 하고 `tell` 명령을 런에 넘긴다
+
+## 라이선스
+MIT — [LICENSE](LICENSE)
