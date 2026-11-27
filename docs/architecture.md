@@ -11,7 +11,7 @@
 - **언어·의존성**: Python 3.8+ **표준 라이브러리만**. 화면은 `▀` 반블록 픽셀아트(256색). Pillow 는 `tools/` 의 이미지 생성에만
 - **루프**: 12 FPS. `World.update(dt)` 로 상태를 진행 → `compose(world, w, h)` 가 ANSI 문자열 줄 목록을 만든다 → 터미널 또는 옆 패널(JSON 프레임)로 출력
 - **외부와의 연결**은 전부 **백그라운드 스레드 + 큐**다. 메인 루프는 매 프레임 `poll()` 로 결과만 가져가고, 실패해도 멈추지 않는다
-- **테스트**: `python3 -m unittest discover -s tests` (57개, 약 18초, 네트워크·OpenAI·Codex 없음)
+- **테스트**: `python3 -m unittest discover -s tests` (60개, 약 17초, 네트워크·OpenAI·Codex 없음)
 
 ## 2. 파일 지도
 
@@ -33,7 +33,7 @@
 | `tools/sentry_seed.py` · `codex-autopilot.sh` | Sentry 테스트 이벤트 넣기 / Codex 자율 운영 루프 (`XMAS_MARKET_RUNTIME` 으로 다른 대시보드에 붙일 수 있음) | |
 | `tools/elf_live_eval.py` | 엘프만 실서버 `/metrics`·레버·실제 OpenAI 로 돌려 조치 기록을 남김 (쥐 없음 → 트리아지 0회) | |
 | `recordings/ai.jsonl` | 실제 AI 트리아지 녹화 (`--replay`) | |
-| `tests/test_smoke.py` · `test_elf.py` | 40 + 17 테스트. 가짜 OpenAI(`FakeOpenAI`)·가짜 Codex 리뷰·가짜 `/metrics`·가짜 시계 | `new_world` · `step` · `wait_ai` |
+| `tests/test_smoke.py` · `test_elf.py` | 43 + 17 테스트. 가짜 OpenAI(`FakeOpenAI`)·가짜 Codex 리뷰·가짜 `/metrics`·가짜 시계 | `new_world` · `step` · `wait_ai` |
 | (별도 레포) [demo-web](https://github.com/merrybugmas/demo-web) | 실연동 시연 서버: 버그 심은 페이지, `/metrics`, 처리 슬롯 제한, `/admin/levers`, `loadgen.py` | |
 
 ## 3. `xmas_market.py` 안의 구역 (위에서 아래 순서)
@@ -60,7 +60,7 @@
 | 트래픽 | `traffic_spike` · `queue_target`/`update_queue`(줄 길이 = rps ÷ peak, 계산 속도 × `elf.relief()`) · `web_metrics` |
 | 갱신 | **`update(dt)`**: `pump_ai` → `pump_fixer` → rps 읽기 → 새 이슈 → `update_queue` → `elf.update` → 쥐 → 병정 → 파티클 |
 | AI 결과 | `pump_ai` → `_apply_ai(kind, gen, obj, res, err)`: `triage`·`order`·`brief`·`traffic`(→ `elf.on_ai`). `gen != stage_gen` 이면 버림 |
-| 채팅 | `command`(예외를 로그로 삼킴) → `_command`(op 분기) · **`snapshot_state()`**(= `./market status` JSON) |
+| 채팅 | `command`(예외를 로그로 삼킴) → `_command`(op 분기) · **`snapshot_state()`**(= `./market status` JSON) · `report_data`/`report`/`write_report`(사후 보고서: 표는 기록, AI 는 요약만) |
 | 그리기 | `draw(view)` → `draw_bugs`(Sentry 전투) / `draw_market`(트래픽: 노점·트리·상점·점원·엘프·줄) · `crowd_label` |
 
 ## 4. 데이터 흐름
@@ -88,7 +88,7 @@
 2. **대시보드는 멈추지 않는다**: 네트워크·OpenAI·git 은 스레드에서, 결과는 큐로. 실패는 로그 한 줄 + mock/키워드/규칙으로 폴백. `World.command` 는 예외를 삼킨다
 3. **world 는 메인 스레드에서만 바꾼다** (`pump_*` 에서 결과 반영)
 4. **판이 바뀐 뒤 도착한 결과는 버린다** (`stage_gen` 비교)
-5. **OpenAI 비용**: mock 모드(`--live` 없음)는 `--ai` 없으면 0회 (`main` 에서 `args.no_ai` 결정). 엘프는 경보당 첫 판단만, 실행당 `XMAS_AI_TRAFFIC_MAX`. 엘프 채팅 명령은 키워드만
+5. **OpenAI 비용**: mock 모드(`--live` 없음)는 `--ai` 없으면 0회 (`main` 에서 `args.no_ai` 결정). 엘프는 경보당 1회(규칙이 먼저 당기고 AI 는 다음 조치), 실행당 `XMAS_AI_TRAFFIC_MAX`. 엘프 채팅 명령은 키워드만
 6. **사람 우선**: 사람이 정한 판정을 늦게 온 AI 가 덮지 않는다(`issue["ai"]="manual"`). 번호표(요청 거절)는 사람 승인 없이 켜지 않는다. PR 머지는 사람이 한다
 7. **지어내지 않는다**: 실연동 중에는 가짜 쥐·가짜 급증을 만들지 않는다. 서버가 안 준 지표는 `None`(표시 안 함). 레버 없는 서버에서 레버를 당긴 척하지 않는다. mock 추정값은 `mock: true` 로 표시
 8. **읽기 전용**: Sentry 에는 쓰지 않는다. 쓰기는 demo-web 레버(localhost)와 fixer 의 PR 브랜치뿐. Codex 리뷰어는 `-s read-only` 샌드박스로만 돈다

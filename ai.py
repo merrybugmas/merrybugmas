@@ -62,6 +62,19 @@ BRIEF_SCHEMA = {
     },
 }
 
+REPORT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["title", "summary", "causes", "human_todo", "next_steps"],
+    "properties": {
+        "title": {"type": "string"},
+        "summary": {"type": "array", "items": {"type": "string"}},
+        "causes": {"type": "array", "items": {"type": "string"}},
+        "human_todo": {"type": "array", "items": {"type": "string"}},
+        "next_steps": {"type": "array", "items": {"type": "string"}},
+    },
+}
+
 LEVERS = ["cache", "capacity", "waitroom", "human", "none"]
 TRAFFIC_SCHEMA = {
     "type": "object",
@@ -112,6 +125,17 @@ reason: 판정 근거 (한국어, 35자 이내)
 fix: fixable 이면 MR 제목으로 쓸 수정 요약 (한국어, 30자 이내). 아니면 "".
 """
 
+REPORT_PROMPT = """너는 장애 대응이 끝난 뒤 사후 보고서(포스트모템) 초안을 쓰는 운영 담당이다.
+입력 JSON 은 대시보드가 기록한 사실뿐이다: history(처리한 Sentry 이슈: outcome fixed/noise/human, 판정 근거 note, PR),
+prs(병정이 연 PR 과 Codex 리뷰 근거), elf_actions(트래픽 대응 레버 조치와 결과), stats, traffic.
+입력에 없는 사실·숫자는 지어내지 않는다. 숫자는 입력에서 그대로 옮긴다.
+title: 보고서 제목 (한국어, 40자 이내)
+summary: 무슨 일이 있었고 어떻게 대응했는지 2~4줄 (각 60자 이내)
+causes: 이슈를 원인별로 묶은 2~4줄 (예: "프론트 null 접근 3건 - PR 로 수정")
+human_todo: 사람이 해야 할 일 (needs-human 이슈, 열린 PR 리뷰·머지, 번호표 승인 등). 없으면 빈 배열
+next_steps: 재발 방지·개선 제안 2~3줄
+"""
+
 BRIEF_PROMPT = """너는 온콜 운영자를 돕는 브리핑 담당이다. 대시보드 현황 JSON 을 보고 지금 상황을 짚어 준다.
 traffic.rps/peak_rps/crowd 는 트래픽, mice 는 미해결 Sentry 이슈(state: roam 배회, held 병정 처리 중, caged 사람 대기),
 soldiers 는 sentry-bot 서브 에이전트, history 는 처리 결과, stats 는 누적 통계다.
@@ -120,10 +144,11 @@ advice: 운영자가 지금 하면 좋을 일 한 줄 (45자 이내). 병정 명
 """
 
 TRAFFIC_PROMPT = """너는 크리스마스 마켓 상점의 엘프 점원이자 트래픽 대응 에이전트다. 웹 서버에 요청이 몰려 경보가 울렸다.
-상황 JSON 을 보고 지금 당길 레버를 하나 고른다.
+규칙이 방금 레버 하나(just_pulled)를 당겼다. 상황 JSON 을 보고, 그것으로 부족하면 다음에 당길 레버를 하나 고른다.
   load: rps ÷ 처리 가능량 추정 (1 이상이면 넘침), rps·peak_rps, error_pct(5xx %), latency_ms(평균 응답),
   waiting(슬롯을 기다리는 요청 수), levers(지금 레버 상태), tried(이번 경보에서 이미 당긴 레버), api_errors(5xx 가 과부하 때문이 아닐 수 있음)
 lever:
+  (levers 는 just_pulled 를 당긴 뒤의 상태다. just_pulled 만으로 충분해 보이면 none)
   cache     = 느린 API 응답 캐시를 켠다. 응답 시간이 높고 캐시가 꺼져 있을 때 먼저. 위험 낮음
   capacity  = 처리 슬롯(계산대)을 늘린다. 캐시 뒤에도 넘치거나 waiting 이 쌓일 때. 최대 8
   waitroom  = 번호표: 넘치는 요청을 기다리게 두지 않고 429 로 돌려보낸다. 다른 레버로 안 될 때 최후 수단 (사람 승인 필요)
@@ -255,6 +280,12 @@ class Brain:
         r = self.ask(TRIAGE_PROMPT, user, "sentry_triage", TRIAGE_SCHEMA)
         kind = _choice(r.get("kind"), KINDS, "kind")
         return {"kind": kind, "reason": _str(r.get("reason")), "fix": _str(r.get("fix")) if kind == "fixable" else ""}
+
+    def report(self, p):
+        r = self.ask(REPORT_PROMPT, json.dumps(p, ensure_ascii=False), "postmortem", REPORT_SCHEMA)
+        lines = lambda k: [_str(x) for x in r.get(k) or [] if _str(x)][:6]  # noqa: E731
+        return {"title": _str(r.get("title")), "summary": lines("summary"), "causes": lines("causes"),
+                "human_todo": lines("human_todo"), "next_steps": lines("next_steps")}
 
     def brief(self, p):
         r = self.ask(BRIEF_PROMPT, json.dumps(p, ensure_ascii=False), "ops_brief", BRIEF_SCHEMA)

@@ -24,6 +24,7 @@ case "${1:-help}" in
 ./market prs                    병정이 실제로 연 PR 목록을 로그에 (--live + XMAS_FIX_REPO 일 때)
 ./market human                  우리 속(needs-human) 쥐 처리 완료
 ./market brief                  AI 운영 브리핑 (현황 3줄 + 권고. AI 가 꺼져 있으면 숫자 한 줄)
+./market report                 사후 보고서 → .runtime/reports/*.md (처리 이슈·PR·Codex 리뷰·엘프 조치. AI 면 요약·원인·할 일, OpenAI 1회)
 ./market say <메시지>            대시보드 로그에 메시지 표시
 ./market auto on|off            자동 연출
 ./market pause | resume

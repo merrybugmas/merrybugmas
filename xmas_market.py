@@ -583,8 +583,8 @@ class Soldier:
         if self.state == "triage" and m.issue.get("ai") == "pending" and self.timer > -8:
             self.bubble = "? AI 판정 중"  # AI 판정이 올 때까지 최대 8초 더 기다린다
             return
-        if self.state == "fix" and m.issue.get("pr") == "pending" and self.timer > -150:
-            self.bubble = "PR 작성 중…"  # 실제 패치·push·PR 이 끝날 때까지 기다린다 (최대 150초)
+        if self.state == "fix" and m.issue.get("pr") == "pending" and self.timer > -300:
+            self.bubble = "PR 작성 중…"  # 실제 패치·Codex 리뷰(한 번에 하나씩)·push·PR 이 끝날 때까지 (최대 300초)
             if R.random() < 6 * dt:
                 world.spark(m.x + R.uniform(0, 14), m.y - R.uniform(0, 5))
             return
@@ -608,7 +608,7 @@ class Soldier:
                 self.state, self.timer, self.bubble = "flag", 1.1, "!! call human"
         elif self.state == "fix":
             pr = m.issue.get("pr")
-            if pr == "pending":  # 150초 안에 안 끝났다
+            if pr == "pending":  # 300초 안에 안 끝났다
                 m.issue["pr"], m.issue["pr_err"] = None, "시간 초과"
             if m.issue.get("pr_err"):  # 실제 수정을 못 했다: 사람에게 넘긴다 (MR 을 지어내지 않는다)
                 world.log("🔧 %s 자동 수정 실패 (%s) - 사람에게 넘김" % (iid, m.issue["pr_err"][:60]), 208)
@@ -830,10 +830,8 @@ class World:
             else:
                 issue["pr"] = res
                 rv = res.get("review") if isinstance(res, dict) else None
-                if rv and rv.get("verdict") == "approve":
+                if rv:
                     self.log("🔍 Codex 리뷰 승인: %s - %s" % (issue["id"], rv["reason"][:70]), 46)
-                elif rv:
-                    self.log("🔍 Codex 리뷰 못 함: %s - 사람 리뷰로 (%s)" % (issue["id"], rv["reason"][:50]), 245)
 
     def record(self, m, outcome, s, mr=None, pr=None):
         if outcome == "fixed":  # 처치한 쥐는 뒤쪽 우리로 날아간다
@@ -1205,13 +1203,16 @@ class World:
         if gen != self.stage_gen:  # 판이 바뀌었다
             return
         if kind == "traffic":
-            self.elf.on_ai(self, res, err)
+            self.elf.on_ai(self, res, err, obj[1] if isinstance(obj, tuple) else None)
         elif kind == "order":
             if err is not None:
                 self.log("🧠 해석 실패 (%s) - 키워드로 처리" % type(err).__name__, 245, "all")
                 self.order_keywords(obj)
             else:
                 self.apply_ai_order(obj, res)
+        elif kind == "report":
+            path = self.write_report(obj, None if err is not None else res)
+            self.log("📝 사후 보고서%s: %s" % (" (AI 요약 실패 - 기록만)" if err is not None else "", path), 46, "all")
         elif kind == "brief":
             if err is not None:
                 self.log("🧠 브리핑 실패 (%s)" % type(err).__name__, 245, "all")
@@ -1219,6 +1220,77 @@ class World:
                 for line in res["summary"][:3]:
                     self.log("🧠 " + line, 159, "all")
                 self.log("🧠 권고: " + res["advice"], 213, "all")
+
+    def report_data(self):
+        """사후 보고서에 쓰는 사실: 처리 기록 전체 · PR(Codex 리뷰) · 엘프 조치 · 통계. AI 에는 이것만 넘긴다."""
+        st = self.snapshot_state()
+        return {"service": st["service"], "minutes": round(self.t / 60, 1), "live": st["live"],
+                "traffic": {k: st["traffic"].get(k) for k in ("rps", "peak_rps", "crowd", "web")},
+                "stats": st["stats"], "open_mice": st["mice"],
+                "history": [{"id": r["id"], "title": r["title"], "kind": r["kind"], "outcome": r["outcome"],
+                             "soldier": r["soldier"], "pr": r.get("pr"), "url": r.get("url"), "mr": r.get("mr"),
+                             "note": r.get("note", "")} for r in self.history[-60:]],
+                "prs": st["prs"], "elf_actions": self.elf.snapshot()["actions"]}
+
+    def report(self):
+        """./market report: 사후 보고서(마크다운)를 .runtime/reports/ 에 쓴다. AI 가 켜져 있으면 요약·원인·할 일을 1회 받아 붙인다."""
+        data = self.report_data()
+        if self.ai is None or getattr(self.ai, "replay", False):
+            self.log("📝 사후 보고서 (AI 꺼짐 - 기록만): %s" % self.write_report(data, None), 46, "all")
+            return
+        self.log("📝 사후 보고서 작성 중… (OpenAI 1회)", 245, "all")
+        self.ai.submit("report", data, (self.stage_gen, data))
+
+    def write_report(self, d, ai_res):
+        """숫자·표는 기록에서 그대로, 요약·원인·할 일은 AI(있으면). 경로를 돌려준다."""
+        out_dir = getattr(self, "report_dir", None) or os.path.join(RUNTIME_DIR, "reports")
+        os.makedirs(out_dir, exist_ok=True)
+        path = os.path.join(out_dir, "report-%s.md" % time.strftime("%Y%m%d-%H%M%S"))
+        names = {s.idx + 1: s.name for s in self.soldiers}
+        word = {"fixed": "✔ 수정", "noise": "✖ noise", "human": "! 사람"}
+        L = ["# %s" % ((ai_res or {}).get("title") or "MERRY BUGMAS 사후 보고서"), "",
+             "%s · 서비스 %s · %s분 · 데이터 %s" % (time.strftime("%Y-%m-%d %H:%M"), d["service"] or "ALL", d["minutes"],
+                                              "실연동" if d["live"]["on"] or d["live"]["traffic"] == "metrics" else "mock"), ""]
+        if ai_res:
+            L += ["## 요약 (AI)", ""] + ["- " + x for x in ai_res["summary"]] + [""]
+            L += ["## 원인별 (AI)", ""] + ["- " + x for x in ai_res["causes"]] + [""]
+            L += ["## 사람이 할 일 (AI)", ""] + (["- [ ] " + x for x in ai_res["human_todo"]] or ["- 없음"]) + [""]
+        st = d["stats"]
+        L += ["## 숫자 (기록 그대로)", "",
+              "| 처리한 이슈 | 수정 | noise | 사람에게 | review 반려 | 열린 PR | 엘프 조치 |", "|---|---|---|---|---|---|---|",
+              "| %d | %d | %d | %d | %d | %d | %d |" % (
+                  len(d["history"]), sum(1 for r in d["history"] if r["outcome"] == "fixed"),
+                  sum(1 for r in d["history"] if r["outcome"] == "noise"),
+                  sum(1 for r in d["history"] if r["outcome"] == "human"), st.get("blocked", 0), len(d["prs"]),
+                  sum(1 for a in d["elf_actions"] if a["by"] != "원복")), ""]
+        if d["history"]:
+            L += ["## 처리한 이슈", "", "| 결과 | 이슈 | 판정 | 병정 | PR·MR | 근거 | 제목 |", "|---|---|---|---|---|---|---|"]
+            for r in d["history"]:
+                link = "[#%s](%s)" % (r["pr"], r["url"]) if r.get("pr") else ("!%s" % r["mr"] if r.get("mr") else "-")
+                L.append("| %s | %s | %s | %s | %s | %s | %s |" % (
+                    word.get(r["outcome"], r["outcome"]), r["id"], r["kind"], names.get(r["soldier"], r["soldier"]),
+                    link, (r["note"] or "").replace("|", "/"), r["title"][:60].replace("|", "/")))
+            L.append("")
+        if d["prs"]:
+            L += ["## 병정이 연 PR (Codex 리뷰)", ""]
+            for p in d["prs"]:
+                rv = p.get("review") or {}
+                L.append("- [#%s](%s) %s (%s)%s" % (p["pr"], p["url"], p["title"], p["issue"],
+                                                  " — 🔍 Codex: %s" % rv["reason"] if rv.get("reason") else ""))
+            L.append("")
+        if d["elf_actions"]:
+            L += ["## 🧝 트래픽 대응 (엘프)", "", "| 초 | 레버 | 누가 | 근거 | 결과 | AI 의견 |", "|---|---|---|---|---|---|"]
+            for a in d["elf_actions"]:
+                L.append("| %s | %s | %s | %s | %s | %s |" % (a["t"], a["lever"], a["by"], a["reason"], a.get("result") or "-",
+                                                         a.get("ai") or "-"))
+            L.append("")
+        if ai_res and ai_res["next_steps"]:
+            L += ["## 다음에 (AI 제안)", ""] + ["- " + x for x in ai_res["next_steps"]] + [""]
+        L += ["---", "숫자와 표는 대시보드 기록 그대로다. '(AI)' 절은 그 기록만 넘겨 OpenAI 가 쓴 초안이니 사람이 확인한다."]
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(L) + "\n")
+        self.last_report = path
+        return path
 
     def brief(self):
         if self.ai is None or getattr(self.ai, "replay", False):
@@ -1363,6 +1435,8 @@ class World:
                 self.open_history(arg.upper() or None)
         elif op in ("brief", "briefing", "브리핑"):
             self.brief()
+        elif op in ("report", "postmortem", "보고서"):
+            self.report()
         elif op == "say":
             self.log("💬 codex: " + arg, 183, "all")
         else:
@@ -1400,6 +1474,7 @@ class World:
             "ai": {"on": self.ai is not None, "model": self.ai.model if self.ai else None,
                    "calls": self.ai.calls if self.ai else 0, "fails": self.ai.fails if self.ai else 0},
             "view": self.view,
+            "report": getattr(self, "last_report", None),
             "log": ["%02d:%02d %s" % (divmod(int(ts), 60) + (text,)) for ts, text, _, _ in self.logs[-12:]],
         }
 

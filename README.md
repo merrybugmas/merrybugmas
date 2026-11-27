@@ -67,7 +67,7 @@ MERRY BUGMAS 는 이 셋을 **한 장면**으로 합친다. 트래픽은 줄, �
 
 **🧝 엘프가 대응한다.** 줄이 밀리면(5xx·응답 시간·대기 요청) 상점 지붕 위 엘프가 🎁 캐시 → 🧾 계산대 증설 순으로 레버를 당기고,
 10초 뒤 숫자로 효과를 확인한다. 🎫 번호표(넘치는 요청 429)는 사람이 `./market tell 엘프 승인` 해야 켠다. 잠잠해지면 하나씩 원복한다.
-판단은 규칙, OpenAI 가 켜져 있으면 경보마다 첫 판단만 AI 에게 묻는다(실행당 최대 5회). → [docs/traffic-agent.md](docs/traffic-agent.md)
+첫 레버는 규칙이 기다리지 않고 당기고, OpenAI 가 켜져 있으면 그동안 AI 가 "부족하면 다음은?"을 판단한다(경보마다 1회, 실행당 최대 5회). 실측: AI 답을 기다리던 이전 방식보다 5xx 최고치 33% → 20%. → [docs/traffic-agent.md](docs/traffic-agent.md)
 
 ![엘프가 캐시를 켜고 계산대를 늘리는 장면](docs/images/elf.png)
 
@@ -144,7 +144,7 @@ needs-human 8건은 모두 맞혔다. 틀린 3건 중 2건은 사람에게 넘�
 Codex·Claude Code 는 이 폴더에서 `AGENTS.md` 를 읽고, 대시보드와는 `.runtime/` 파일로 이어진다.
 - 대시보드는 1초마다 `.runtime/state.json` 에 현황(단계·서비스·트래픽·쥐·병정·잡은 쥐 기록·로그)을 쓴다. 채팅은 `./market status` 로 읽고 숫자로 답한다.
 - 채팅이 `./market start WEB sentry`, `./market tell …`, `./market say …`, `./market outbreak 3` 등을 실행하면 `.runtime/cmd` 를 거쳐 바로 반영된다.
-- 사람도 같은 명령을 쓸 수 있다. 목록은 `./market help`. `./market brief` 는 AI 운영 브리핑.
+- 사람도 같은 명령을 쓸 수 있다. 목록은 `./market help`. `./market brief` 는 AI 운영 브리핑, `./market report` 는 사후 보고서(기록은 표 그대로 + AI 요약·원인·할 일, [예시](docs/eval/report-sample.md)).
 - Claude Code 옆 패널에 띄울 때는 `python3 xmas_market.py --stream --size 90x40` 이 프레임을 JSON 줄로 내보내고, `.runtime/pane_cmd` 로 키·클릭을 받는다.
 - 그 패널 mod 는 `claude-mod/merrybugmas/` 에 있다. 이 폴더에서 `claude --plugin-dir claude-mod/merrybugmas` 로 열면 패널에 대시보드가 실연동(`--live`)으로 뜨고, 병정이 연 PR 이 클릭 링크로 보인다. `/merrybugmas` 로 다시 시작, `/merrybugmas mock` 이면 Sentry·트래픽 둘 다 mock + OpenAI 0회, `/merrybugmas noai` 면 실연동에서 OpenAI 만 끈다, `/merrybugmas stop` 으로 끈다 ([docs/run-modes.md](docs/run-modes.md))
 
@@ -175,7 +175,7 @@ python3 -m unittest discover -s tests -v                             # 스모크
 ```
 
 ## 테스트
-`tests/test_smoke.py` 40개 + `tests/test_elf.py` 17개 (표준 라이브러리 unittest, 57개, 약 17초):
+`tests/test_smoke.py` 43개 + `tests/test_elf.py` 17개 (표준 라이브러리 unittest, 60개, 약 17초):
 - 6개 서비스 × 3개 화면(18개 조합) + 타이틀·메뉴·기록 창이 오류 없이 그려지는지
 - 키워드 병정 명령 (지목·복귀·보고)
 - AI 병정을 가짜 OpenAI 응답으로: 묘사로 가리킨 쥐 해석, 트리아지가 mock 판정을 바꾸고 MR 로그에 수정 요약이 붙는지, 브리핑, 요청이 strict JSON Schema 인지, **API 실패 시 키워드로 폴백**하는지
@@ -184,7 +184,7 @@ python3 -m unittest discover -s tests -v                             # 스모크
 - Sentry 실연동을 가짜 Sentry 응답으로: 실제 이슈가 중복 없이 쥐가 되는지, 가짜 쥐가 섞이지 않는지, AI 가 실제 제목을 판정하는지, **읽기 실패 시 mock 으로 폴백**하는지
 - 엘프(`tests/test_elf.py`): mock 급증에 캐시 → 계산대 순으로 대응하고 해소·원복하는지, 번호표는 승인 전에 안 켜는지, AI 가 고른 레버를 쓰고 예산을 넘으면 규칙으로 가는지, 실서버 레버를 POST 로 바꾸는지, API 장애면 담당자를 부르는지, 레버 없는 서버에서 켠 척하지 않는지
 - 트래픽 실연동을 가짜 `/metrics` 와 가짜 시계로: 카운터 증가분으로 rps 를 내는지, 서버 재시작·읽기 끊김 처리, 가짜 급증을 섞지 않는지, 5xx 비율·응답 시간·Web Vitals 를 읽고 없는 항목은 비워 두는지
-- Codex PR 리뷰를 가짜 Codex 로: 승인이면 PR 에 리뷰 근거, 반려면 PR 없이 사람에게, Codex 실패면 '리뷰 못 함'으로 PR, 명령이 읽기 전용·스키마 지정인지
+- Codex PR 리뷰를 가짜 Codex 로: 승인이면 PR 에 리뷰 근거, 반려면 PR 없이 사람에게, Codex 실패면 PR 없이 사람에게, 시간 초과면 1회 재시도, 명령이 읽기 전용·스키마 지정인지
 - 실제 수정을 가짜 OpenAI 패치와 가짜 git/gh 로: 실연동 이슈는 PR 이 되고 같은 이슈로 두 번 열지 않는지, 패치가 안 맞거나 스택이 없으면 사람에게 넘기는지(MR 을 지어내지 않는지), mock 이슈는 연출 MR 그대로인지
 - 병정 질의응답: 질문이 answer 로 해석되고 처리 기록이 함께 넘어가는지
 
@@ -240,7 +240,7 @@ fixable 판정 → OpenAI 가 레포 소스(XMAS_FIX_FILES, 기본 app.js·serve
 - 같은 이슈는 PR 을 한 번만 연다 (`.runtime/prs.json`). 한 번 실행에 최대 `XMAS_FIX_MAX`(기본 5)개
 - 고칠 위치를 모르는 이슈(스택이 없는 이벤트)나 패치가 맞지 않으면 MR 을 지어내지 않고 **사람에게 넘긴다** (우리에 가둠)
 - mock 이슈는 지금처럼 `MR !14xx` 연출이다. 실제 PR 은 실연동 이슈에만 열린다
-- 필요: `git`, `gh`(로그인), 대상 레포 push 권한, 실제 OpenAI API (`--replay`·`--no-ai` 에서는 꺼진다). Codex 리뷰는 `codex` CLI(로그인)가 있으면 켜진다 (`XMAS_FIX_REVIEW=off` 로 끔). Codex 가 실패하면 PR 본문에 '리뷰 못 함'으로 적고 연다
+- 필요: `git`, `gh`(로그인), 대상 레포 push 권한, 실제 OpenAI API (`--replay`·`--no-ai` 에서는 꺼진다). Codex 리뷰는 `codex` CLI(로그인)가 있으면 켜진다 (`XMAS_FIX_REVIEW=off` 로 끔). Codex 가 90초 안에 답하지 않으면 한 번 더 묻고, 그래도 실패하면 **검토하지 못한 수정은 올리지 않고** 사람에게 넘긴다. 리뷰는 한 번에 하나씩, 추론 강도 medium · MCP 없이 돈다
 
 **확인 (2026-11-27)**: 데모 웹앱의 실제 Sentry 이슈 7건으로 돌려 49초 만에 PR 3개가 열렸다 —
 [#1](https://github.com/merrybugmas/demo-web/pull/1) 장바구니 쿠폰 null 방어,
@@ -251,6 +251,8 @@ fixable 판정 → OpenAI 가 레포 소스(XMAS_FIX_FILES, 기본 app.js·serve
 [#4](https://github.com/merrybugmas/demo-web/pull/4) (`/api/notice` 응답이 HTML 일 때 JSON.parse 방어)를 열었다. 같은 이슈도 실행마다 판정이 달라질 수 있어, PR 은 열기만 하고 머지는 사람이 한다.
 
 **Codex 리뷰 추가 후 (2026-11-27)**: 같은 7건으로 다시 돌려 fixable 3건을 Codex 가 모두 승인해 [#5](https://github.com/merrybugmas/demo-web/pull/5) · [#6](https://github.com/merrybugmas/demo-web/pull/6) · [#7](https://github.com/merrybugmas/demo-web/pull/7) 이 열렸다. PR 본문에 리뷰 근거가 붙는다 (예: "쿠폰이 null 이면 할인율을 0으로 처리해 오류를 막고, 정상 숫자 할인율의 계산은 유지한다"). 리뷰는 건당 약 50초, OpenAI 호출 10회.
+
+**Codex 리뷰어 평가** ([docs/eval/review-codex.md](docs/eval/review-codex.md)): 맞는 패치 5개·틀린 패치 6개로 4번 돌려, Codex 가 답한 판정 19건 중 18건이 정답(틀린 패치는 답한 12건 모두 반려). 다만 실행의 약 절반은 Codex 가 답 없이 멈춰 시간 초과였다. 그래서 답이 없으면 PR 을 열지 않고 사람에게 넘긴다.
 
 ### 병정에게 묻기
 AI 가 켜져 있으면 병정이 질문에도 답한다. 명령 해석에 최근 처리 기록 15건과 누적 통계를 같이 넘긴다.

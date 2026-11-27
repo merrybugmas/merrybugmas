@@ -139,17 +139,19 @@ class AiElfTest(unittest.TestCase):
         brain = ai.Brain(key="k", transport=fake, workers=1)
         w = mock_world(rps=3300.0, ai_brain=brain, ai_max=1)
         step(w, 2.5)
-        self.assertTrue(wait_ai(w, lambda: w.elf.state == "watch"))
-        self.assertEqual(w.elf.levers["capacity"], 4)  # AI 는 캐시보다 계산대를 골랐다
-        self.assertFalse(w.elf.levers["cache"])
-        self.assertEqual(w.elf.actions[-1]["by"], "AI")
+        self.assertEqual(w.elf.state, "watch")  # AI 를 기다리지 않고 규칙이 바로 첫 레버를 당긴다
+        self.assertTrue(w.elf.levers["cache"])
+        self.assertEqual(w.elf.actions[-1]["by"], "규칙")
+        self.assertTrue(wait_ai(w, lambda: w.elf.ai_next is not None))  # AI 는 그동안 다음 조치를 고른다
+        self.assertEqual(w.elf.ai_next["lever"], "capacity")
         asked = [b for b in fake.bodies if b["text"]["format"]["name"] == "traffic_lever"]
         self.assertEqual(len(asked), 1)
-        self.assertIn('"tried": []', asked[0]["input"])
+        self.assertIn('"just_pulled": "cache"', asked[0]["input"])
         w.src.rps = lambda t: 9000.0
-        step(w, 11)  # 아직 넘침 → 다음 판단: 예산 1회를 다 써서 규칙으로
+        step(w, 11)  # 아직 넘침 → AI 가 고른 계산대
+        self.assertEqual(w.elf.levers["capacity"], 4)
+        self.assertEqual(w.elf.actions[-1]["by"], "AI")
         self.assertEqual(sum(1 for b in fake.bodies if b["text"]["format"]["name"] == "traffic_lever"), 1)
-        self.assertTrue(w.elf.levers["cache"])  # 같은 경보의 다음 판단은 AI 없이 규칙
 
     def test_budget_spans_alarms(self):
         fake = FakeOpenAI({"traffic_lever": {"lever": "cache", "reason": "응답 느림", "say": ""}})

@@ -9,7 +9,8 @@
   waitroom  🎫 번호표: 넘치는 요청은 429      사람 승인 필요
   human     📞 레버로 안 되는 문제 → 담당자 호출
 
-판단은 규칙으로 하고, OpenAI 가 켜져 있으면 경보마다 첫 판단만 AI 에게 묻는다 (재시도 없이 HTTP 1회).
+경보가 울리면 규칙이 바로 첫 레버를 당기고(기다리지 않는다), OpenAI 가 켜져 있으면 그와 동시에 AI 에게
+"이걸로 부족하면 다음은?"을 묻는다 (경보마다 1회, 재시도 없이 HTTP 1회). 10초 뒤에도 밀리면 AI 가 고른 레버를 먼저 쓴다.
 AI 호출은 대시보드 실행 한 번에 XMAS_AI_TRAFFIC_MAX 번(기본 5)까지만 (판·서비스를 바꿔도 이어서 센다) — 넘으면 규칙으로만 움직인다.
 """
 import os
@@ -53,6 +54,7 @@ class Elf:
         self.actions = []  # 조치 기록: {t, lever, by, reason, result}
         self.auto = True
         self.ai_used, self.ai_max, self.ai_note = 0, ai_budget() if ai_max is None else ai_max, False
+        self.ai_next, self.alarm_no = None, 0  # AI 가 제안한 다음 레버 · 지금 경보 번호
         self.speech, self.speech_t = "", 0.0
         self.last = {}  # 마지막으로 잰 압력
 
@@ -180,33 +182,45 @@ class Elf:
         return world.ai is not None and hasattr(world.ai, "ask") and not getattr(world.ai, "replay", False)
 
     def decide(self, world, p, first=False):
-        """경보 첫 판단만 AI 에게 묻는다 (경보 한 번에 최대 1회). 이어지는 판단은 규칙."""
-        if first and self.ai_ready(world) and self.ai_used < self.ai_max:
-            self.ai_used += 1
-            payload = {k: p[k] for k in ("load", "rps", "peak_rps", "error_pct", "latency_ms", "waiting", "api_errors")}
-            payload.update(levers=dict(self.levers), tried=list(self.tried), max_capacity=MAX_CAP,
-                           source="mock 추정" if p["mock"] else "실서버 /metrics")
-            world.ai.submit("traffic", payload, (world.stage_gen, "elf"))
-            self.state, self.timer = "think", THINK_TIMEOUT
-            world.log("🧠 엘프가 AI 에게 묻는 중 (이번 실행 %d/%d회)" % (self.ai_used, self.ai_max), 141, "traffic")
+        """첫 판단: 규칙이 바로 레버를 당기고, AI 에게는 다음 조치를 동시에 묻는다 (경보 한 번에 최대 1회).
+        이어지는 판단: AI 가 고른 다음 레버가 있으면 그것, 없으면 규칙."""
+        if first:
+            self.ai_next = None
+            lever = self.rule(p)
+            self.act(world, lever, p["why"] or "밀림", "규칙")
+            if self.ai_ready(world) and self.ai_used < self.ai_max:
+                self.ai_used += 1
+                self.alarm_no += 1
+                payload = {k: p[k] for k in ("load", "rps", "peak_rps", "error_pct", "latency_ms", "waiting", "api_errors")}
+                payload.update(levers=dict(self.levers), tried=list(self.tried), just_pulled=lever, max_capacity=MAX_CAP,
+                               source="mock 추정" if p["mock"] else "실서버 /metrics")
+                world.ai.submit("traffic", payload, (world.stage_gen, ("elf", self.alarm_no)))
+                world.log("🧠 엘프가 AI 에게 다음 조치를 묻는 중 (이번 실행 %d/%d회)" % (self.ai_used, self.ai_max), 141, "traffic")
+            elif self.ai_ready(world) and not self.ai_note:
+                self.ai_note = True
+                world.log("🧠 엘프 AI 예산 %d회 다 씀 - 이제 규칙으로만 판단" % self.ai_max, 245, "all")
             return
-        if first and self.ai_ready(world) and not self.ai_note:
-            self.ai_note = True
-            world.log("🧠 엘프 AI 예산 %d회 다 씀 - 이제 규칙으로만 판단" % self.ai_max, 245, "all")
+        nxt, self.ai_next = self.ai_next, None
+        if nxt and self.can(nxt["lever"]) and (nxt["lever"] not in self.tried or nxt["lever"] == "capacity"):
+            return self.act(world, nxt["lever"], nxt["reason"] or p["why"], "AI", nxt.get("say"))
         self.act(world, self.rule(p), p["why"] or "밀림", "규칙")
 
-    def on_ai(self, world, res, err):
-        if self.state != "think":
-            return  # 이미 규칙으로 처리했다
-        p = self.last or self.pressure(world)
+    def on_ai(self, world, res, err, alarm_no=None):
+        """AI 의 다음 조치 제안. 이미 다른 경보로 넘어갔거나 해소됐으면 기록만 남긴다."""
         if err is not None:
-            world.log("🧠 엘프 AI 실패 (%s) - 규칙으로" % type(err).__name__, 245, "traffic")
-            return self.act(world, self.rule(p), p["why"] or "밀림", "규칙")
-        lever = res["lever"]
-        if not self.can(lever) or (lever in self.tried and lever != "capacity"):
-            world.log("🧠 AI 가 고른 %s 는 이미 썼음 - 규칙으로" % LEVER_WORD.get(lever, lever), 245, "traffic")
-            return self.act(world, self.rule(p), res["reason"] or p["why"], "규칙")
-        self.act(world, lever, res["reason"] or p["why"], "AI", res.get("say"))
+            world.log("🧠 엘프 AI 실패 (%s) - 규칙대로 계속" % type(err).__name__, 245, "traffic")
+            return
+        lever, reason = res["lever"], res["reason"]
+        if self.actions:
+            self.actions[-1]["ai"] = "%s: %s" % (lever, reason[:50])
+        if alarm_no is not None and alarm_no != self.alarm_no or self.state not in ("watch", "ask"):
+            world.log("🧠 엘프 AI 의견(지난 경보): %s - %s" % (LEVER_WORD.get(lever, lever), reason), 245, "traffic")
+            return
+        if lever == "none" or not self.can(lever) or (lever in self.tried and lever != "capacity"):
+            self.say(world, "🧠 AI: 지금 조치로 지켜보자 (%s)" % reason, 141)
+            return
+        self.ai_next = {"lever": lever, "reason": reason, "say": res.get("say")}
+        self.say(world, "🧠 AI: 부족하면 다음은 %s (%s)" % (LEVER_WORD.get(lever, lever), reason), 141)
 
     # ---- 조치
     def act(self, world, lever, reason, by, said=None):

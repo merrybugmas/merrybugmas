@@ -15,7 +15,11 @@
   XMAS_FIX_BASE    PR 의 기준 브랜치 (기본 main)
   XMAS_FIX_MAX     한 번 실행에서 열 PR 최대 수 (기본 5)
   XMAS_FIX_REVIEW  codex(기본: codex CLI 가 있으면 PR 전에 Codex 리뷰) / off
-  XMAS_FIX_REVIEW_TIMEOUT  Codex 리뷰를 기다리는 최대 초 (기본 100). 넘거나 실패하면 PR 본문에 '리뷰 못 함'으로 적고 연다
+  XMAS_FIX_REVIEW_TIMEOUT  Codex 리뷰 한 번을 기다리는 최대 초 (기본 90). 넘으면 한 번 더 시도하고, 그래도 안 되면
+                           PR 을 열지 않고 사람에게 넘긴다
+
+Codex 리뷰는 한 번에 하나씩, 추론 강도 medium · MCP 서버 없이 돈다. codex exec 가 가끔 답 없이 멈춰서
+(평가 중 11건 중 6건이 120초 초과) 시간 제한 + 1회 재시도를 둔다.
 """
 import difflib
 import json
@@ -73,6 +77,7 @@ Sentry 이슈 %s: %s
 """
 
 _lock = threading.Lock()
+_review_lock = threading.Lock()  # codex exec 는 한 번에 하나씩
 
 
 class ReviewRejected(Exception):
@@ -84,29 +89,40 @@ def review_enabled():
     return mode not in ("off", "0", "no", "false") and shutil.which("codex") is not None
 
 
-def codex_review(issue, f, diff, repo, run=None, timeout=None):
-    """codex exec(읽기 전용 샌드박스)로 diff 를 리뷰한다. {"verdict": approve|reject, "reason": ...} 를 돌려준다.
-    run 은 테스트에서 subprocess.run 대신 끼우는 함수다."""
+def codex_review(issue, f, diff, repo, run=None, timeout=None, tries=2):
+    """codex exec(읽기 전용 샌드박스)로 diff 를 리뷰한다. {"verdict": approve|reject, "reason": ..., "tries": n} 를 돌려준다.
+    시간 초과면 tries 번까지 다시 한다. run 은 테스트에서 subprocess.run 대신 끼우는 함수다."""
     run = run or subprocess.run
-    timeout = timeout or float(os.environ.get("XMAS_FIX_REVIEW_TIMEOUT", "").strip() or 100)
-    tmp = tempfile.mkdtemp(prefix="xmas-review-")
-    try:
-        schema, out = os.path.join(tmp, "schema.json"), os.path.join(tmp, "out.json")
-        with open(schema, "w", encoding="utf-8") as fh:
-            json.dump(REVIEW_SCHEMA, fh)
-        prompt = REVIEW_PROMPT % (f, issue["id"], issue["title"], issue.get("culprit") or "-", diff)
-        r = run(["codex", "exec", "--skip-git-repo-check", "--ephemeral", "-s", "read-only", "-C", repo,
-                 "--output-schema", schema, "-o", out, prompt],
-                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout)
-        if r.returncode != 0:
-            raise RuntimeError("codex exec 실패: %s" % (r.stderr or r.stdout or "").strip()[-120:])
-        with open(out, encoding="utf-8") as fh:
-            obj = json.loads(fh.read().strip())
-        if obj.get("verdict") not in ("approve", "reject"):
-            raise ValueError("리뷰 응답 형식이 다름")
-        return {"verdict": obj["verdict"], "reason": str(obj.get("reason", ""))[:200], "by": "Codex"}
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    timeout = timeout or float(os.environ.get("XMAS_FIX_REVIEW_TIMEOUT", "").strip() or 90)
+    for n in range(1, tries + 1):
+        try:
+            return dict(_codex_review_once(issue, f, diff, repo, run, timeout), tries=n)
+        except subprocess.TimeoutExpired:
+            if n == tries:
+                raise RuntimeError("codex exec 가 %d초 안에 답하지 않음 (%d회 시도)" % (timeout, tries))
+
+
+def _codex_review_once(issue, f, diff, repo, run, timeout):
+    with _review_lock:  # codex exec 는 한 번에 하나씩
+        tmp = tempfile.mkdtemp(prefix="xmas-review-")
+        try:
+            schema, out = os.path.join(tmp, "schema.json"), os.path.join(tmp, "out.json")
+            with open(schema, "w", encoding="utf-8") as fh:
+                json.dump(REVIEW_SCHEMA, fh)
+            prompt = REVIEW_PROMPT % (f, issue["id"], issue["title"], issue.get("culprit") or "-", diff)
+            r = run(["codex", "exec", "--skip-git-repo-check", "--ephemeral", "-s", "read-only", "-C", repo,
+                     "-c", 'model_reasoning_effort="medium"', "-c", "mcp_servers={}",
+                     "--output-schema", schema, "-o", out, prompt],
+                    stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout)
+            if r.returncode != 0:
+                raise RuntimeError("codex exec 실패: %s" % (r.stderr or r.stdout or "").strip()[-120:])
+            with open(out, encoding="utf-8") as fh:
+                obj = json.loads(fh.read().strip())
+            if obj.get("verdict") not in ("approve", "reject"):
+                raise ValueError("리뷰 응답 형식이 다름")
+            return {"verdict": obj["verdict"], "reason": str(obj.get("reason", ""))[:200], "by": "Codex"}
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 def configured():
@@ -243,16 +259,11 @@ class Fixer:
             diff = "".join(difflib.unified_diff(src[f].splitlines(True), new.splitlines(True), "a/" + f, "b/" + f))
             try:
                 rv = self.review(issue, f, diff, self.repo)
-            except Exception as e:  # noqa: BLE001 — 리뷰 도구가 실패해도 수정은 사람 리뷰로 넘어간다
-                rv = {"verdict": "error", "reason": str(e)[:120], "by": "Codex"}
-            if rv["verdict"] == "reject":
+            except Exception as e:  # noqa: BLE001 — 검토하지 못한 수정은 PR 로 올리지 않는다
+                raise ReviewRejected("Codex 리뷰를 못 함 (%s)" % str(e)[:80])
+            if rv["verdict"] != "approve":
                 raise ReviewRejected(rv["reason"])
-        if rv is None:
-            review_line = ""
-        elif rv["verdict"] == "approve":
-            review_line = "🔍 **Codex 리뷰: 승인** — %s\n\n" % rv["reason"]
-        else:
-            review_line = "🔍 Codex 리뷰를 못 함 (%s) — 사람 리뷰가 필요하다\n\n" % rv["reason"]
+        review_line = "" if rv is None else "🔍 **Codex 리뷰: 승인** — %s\n\n" % rv["reason"]
         body = ("Sentry 이슈 **%s** — `%s`\n\n%s\n\n" % (issue["id"], issue["title"], (p.get("explanation") or "").strip())
                 + review_line
                 + ("Sentry: %s\n\n" % issue["url"] if issue.get("url") else "")

@@ -54,6 +54,7 @@
   "검색 쪽 버그 보여줘" → `./market start SEARCH sentry`. 서비스를 바꾸면 새 판(쥐·통계 초기화)이다
 - `./market view traffic` · `./market view sentry` · `./market view overview` · `./market view agents` · `./market view menu` — 화면 전환. "트래픽 보여줘", "쥐 잡는 거 보여줘", "개요로", "에이전트 보여줘"(병정 셋·엘프 카드), "메뉴로" 같은 말에 쓴다
 - `./market brief` — AI 운영 브리핑(현황 3줄 + 권고)을 대시보드에 띄운다. "지금 상황 요약해 줘" 에 쓴다. AI 가 꺼져 있으면 숫자 한 줄
+- `./market report` — 사후 보고서(마크다운)를 `.runtime/reports/` 에 쓴다: 처리한 이슈·PR(Codex 리뷰)·엘프 조치는 기록 그대로 표로, AI 가 켜져 있으면 요약·원인·사람이 할 일을 붙인다(OpenAI 1회). "오늘 대응 정리해 줘"·"보고서 만들어 줘" 에 쓴다. 경로는 `status` 의 `report`
 - `./market say <짧은 메시지>` — 대시보드 로그에 말풍선처럼 표시 (답변 요약을 한 줄로 띄울 때)
 - `./market auto off` · `./market pause` / `resume`
 

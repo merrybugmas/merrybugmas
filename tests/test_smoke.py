@@ -62,6 +62,43 @@ class FakeOpenAI:
         return fake_response(ans(body) if callable(ans) else ans)
 
 
+class ReportTest(unittest.TestCase):
+    """./market report: 기록은 그대로 표로, AI 는 요약·원인·할 일만 (1회)."""
+
+    def make_world(self):
+        import tempfile
+        w = new_world("WEB", "sentry")
+        w.report_dir = tempfile.mkdtemp()
+        w.outbreak(3)
+        step(w, 40)
+        self.assertTrue(w.history)
+        return w
+
+    def test_report_without_ai_writes_facts_only(self):
+        w = self.make_world()
+        w.command("report")
+        path = w.snapshot_state()["report"]
+        body = open(path, encoding="utf-8").read()
+        self.assertIn("## 숫자 (기록 그대로)", body)
+        self.assertIn(w.history[0]["id"], body)
+        self.assertNotIn("(AI)\n", body)
+
+    def test_report_with_ai_adds_summary_once(self):
+        fake = FakeOpenAI({"postmortem": {"title": "배포 직후 쥐 떼 대응", "summary": ["이슈 3건 처리"],
+                                          "causes": ["null 접근 - 수정"], "human_todo": ["PR 리뷰"], "next_steps": ["입력 검증"]}})
+        w = self.make_world()
+        w.ai = ai.Brain(key="k", transport=fake, workers=1)
+        w.command("report")
+        self.assertTrue(wait_ai(w, lambda: w.snapshot_state()["report"] is not None))
+        body = open(w.snapshot_state()["report"], encoding="utf-8").read()
+        self.assertIn("# 배포 직후 쥐 떼 대응", body)
+        self.assertIn("- [ ] PR 리뷰", body)
+        self.assertIn(w.history[0]["id"], body)  # 표는 AI 가 아니라 기록에서
+        asked = [b for b in fake.bodies if b["text"]["format"]["name"] == "postmortem"]
+        self.assertEqual(len(asked), 1)
+        self.assertIn('"history"', asked[0]["input"])
+
+
 class RenderTest(unittest.TestCase):
     def test_every_service_and_view_renders(self):
         n = 0
@@ -585,10 +622,11 @@ class RealFixTest(unittest.TestCase):
         self.assertEqual(self.published, [])  # 반려된 수정은 PR 을 열지 않는다
         self.assertTrue(any("Codex 리뷰 반려" in t for _, t, _, _ in w.logs))
 
-    def test_codex_review_failure_still_opens_pr_marked_unreviewed(self):
-        w, _ = self.run_review("boom")
-        self.assertEqual(len(self.published), 1)
-        self.assertTrue(any("Codex 리뷰 못 함" in t for _, t, _, _ in w.logs))
+    def test_codex_review_failure_goes_to_human_without_pr(self):
+        w, _ = self.run_review("boom")  # 검토하지 못한 수정은 PR 로 올리지 않는다
+        self.assertEqual(self.published, [])
+        self.assertEqual([r["outcome"] for r in w.history if r["id"] == "WEB-C"], ["human"])
+        self.assertTrue(any("Codex 리뷰를 못 함" in t for _, t, _, _ in w.logs))
 
     def test_codex_review_command_is_read_only_with_schema(self):
         calls = []
@@ -600,11 +638,29 @@ class RealFixTest(unittest.TestCase):
                 fh.write('{"verdict": "reject", "reason": "증상만 숨김"}')
             return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
         rv = self.fixer.codex_review({"id": "WEB-C", "title": "t"}, "app.js", "diff", self.dir, run=run)
-        self.assertEqual((rv["verdict"], rv["reason"]), ("reject", "증상만 숨김"))
+        self.assertEqual((rv["verdict"], rv["reason"], rv["tries"]), ("reject", "증상만 숨김", 1))
         argv = calls[0]
         self.assertEqual(argv[:2], ["codex", "exec"])
         self.assertEqual(argv[argv.index("-s") + 1], "read-only")
         self.assertIn("--output-schema", argv)
+
+    def test_codex_review_retries_once_on_timeout(self):
+        import subprocess
+        n = []
+
+        def run(argv, **kw):
+            n.append(1)
+            if len(n) == 1:
+                raise subprocess.TimeoutExpired(argv, 1)
+            with open(argv[argv.index("-o") + 1], "w") as fh:
+                fh.write('{"verdict": "approve", "reason": "ok"}')
+            return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+        rv = self.fixer.codex_review({"id": "WEB-C", "title": "t"}, "app.js", "diff", self.dir, run=run)
+        self.assertEqual((rv["verdict"], rv["tries"]), ("approve", 2))
+        n.clear()
+        with self.assertRaises(RuntimeError):  # 두 번 다 시간 초과면 실패 (→ PR 없이 사람에게)
+            self.fixer.codex_review({"id": "WEB-C", "title": "t"}, "app.js", "diff", self.dir,
+                                    run=lambda a, **k: (_ for _ in ()).throw(subprocess.TimeoutExpired(a, 1)))
 
     def test_mock_issue_keeps_simulated_mr(self):
         xm.R.seed(7)
