@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # 왼쪽 Codex 채팅 + 오른쪽 크리스마스 마켓 대시보드를 한 화면에 띄운다.
+#   ./run-with-codex.sh        왼쪽: Codex 채팅 (사람이 말로 지휘)
+#   ./run-with-codex.sh auto   왼쪽: Codex 자율 운영자 (tools/codex-autopilot.sh, 30초마다 스스로 판단·지시)
 #   tmux 가 있으면 한 창을 좌우 분할, 없으면(macOS) Terminal 창 두 개를 좌우로 붙인다.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DASH="python3 '$HERE/xmas_market.py'"
 CHAT="cd '$HERE' && codex"
+[ "${1:-}" = auto ] && CHAT="cd '$HERE' && sleep 2 && tools/codex-autopilot.sh ${2:-30}"
 
 if command -v tmux >/dev/null 2>&1; then
   tmux kill-session -t xmas 2>/dev/null || true
