@@ -8,7 +8,8 @@
 
 ```bash
 python3 xmas_market.py          # 대시보드 (60x22 이상, 256색, 의존성 없음, API 키 없이도 동작)
-export OPENAI_API_KEY=...       # (선택) 넣으면 병정이 OpenAI API 로 명령을 해석하고 이슈를 판정한다
+export OPENAI_API_KEY=...       # (선택, .env 에 적어도 됨) 병정이 OpenAI API 로 명령을 해석하고 이슈를 판정한다
+python3 xmas_market.py --replay # 키 없이: 녹화해 둔 실제 AI 트리아지 결과로 재생
 ./run-with-codex.sh             # 왼쪽 Codex 채팅 + 오른쪽 대시보드 (tmux 분할, 없으면 Terminal 창 2개)
 ./run-with-codex.sh auto        # 왼쪽 Codex 자율 운영자: 사람 없이 Codex 가 30초마다 판단해 병정을 지휘
 ```
@@ -100,7 +101,11 @@ MERRY BUGMAS 는 이 셋을 **한 장면**으로 합친다. 트래픽은 줄, �
 
 - 출력은 JSON Schema(strict)로 받아 그대로 게임 동작에 연결한다. 호출은 백그라운드 스레드라 화면이 멈추지 않는다.
 - 키가 없거나 호출이 실패하면 키워드 해석·mock 판정으로 돌아간다 (작전 로그에 "키워드로 처리"). `--no-ai` 로 끌 수도 있다.
-- 환경변수: `OPENAI_API_KEY`, `XMAS_AI_MODEL`(기본 `gpt-5-mini`), `XMAS_AI_EFFORT`(기본 `low`), `XMAS_AI=off`.
+- 환경변수(레포의 `.env` 도 읽는다, git 제외): `OPENAI_API_KEY`, `XMAS_AI_MODEL`(기본 `gpt-5-mini`), `XMAS_AI_EFFORT`(기본 `low`), `XMAS_AI=off`, `XMAS_AI_RECORD=경로`(트리아지 녹화).
+- **녹화 재생** `--replay`: `recordings/ai.jsonl` 에 녹화해 둔 실제 OpenAI 트리아지 결과를 같은 이슈 제목에 다시 쓴다. 키 없이 AI 판정 화면을 볼 수 있다. 녹화에 없는 이슈와 명령 해석·브리핑은 키워드·mock 으로 처리하며, 응답을 새로 지어내지 않는다.
+
+### AI 트리아지 평가
+`python3 tools/eval_triage.py --record recordings/ai.jsonl` 은 정답이 달린 Sentry 이슈 제목 32건(`tests/data/triage_eval.jsonl`: fixable 14 · noise 10 · needs-human 8)을 판정한다. 정확도·혼동 행렬·응답 시간을 `docs/eval/` 에 남기고, 같은 결과를 녹화 재생용으로도 쓴다.
 - `AGENTS.md` 는 채팅 에이전트용 운영 규약이다. 어떤 명령이 있고, 답하기 전에 무엇을 읽고, 무엇을 고치면 안 되는지를 적어 두면 Codex 가 그대로 따른다.
 
 ## 채팅 ↔ 대시보드
