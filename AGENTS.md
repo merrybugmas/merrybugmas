@@ -39,7 +39,7 @@
 
 ## 엘프 = 트래픽 대응 에이전트
 상점 지붕 위 엘프 점원이 트래픽이 밀리면 레버를 당긴다: `캐시`(자동) · `계산대`(처리 슬롯 +2, 자동, 최대 8) · `번호표`(넘치는 요청 429, **사람 승인 필요**) · 레버로 안 되면 담당자 호출.
-- 현황: `status` 의 `traffic.elf` — `state`(idle 감시 / think AI 판단 / ask 승인 대기 / watch 효과 확인 / flag 담당자 호출 / off),
+- 현황: `status` 의 `traffic.elf` — `state`(idle 감시 / think AI 판단 / ask 승인 대기 / watch 효과 확인 / flag 담당자 호출 / cool 조치 뒤 잠깐 대기 / off),
   `levers`(cache·capacity·waitroom), `pending_approval`, `pressure`(load·error_pct·latency_ms·waiting·alarm, `mock: true` 면 추정값), `ai`(used/max), `actions`(레버·by·reason·result)
 - 사용자 말은 `./market tell 엘프 <문장>` 으로 넘긴다 (OpenAI 안 씀): `캐시 켜/꺼` · `계산대 6` · `번호표 켜/꺼` · `승인`/`거절` · `원복` · `보고` · `자동 꺼/켜`
 - 예: "트래픽 몰리면 어떻게 대응했어?" → `traffic.elf.actions` 로 답한다 / "번호표 켜도 돼" → `./market tell 엘프 승인`

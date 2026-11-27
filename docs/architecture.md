@@ -26,7 +26,8 @@
 | `market` | 채팅·사람용 CLI. `status` 는 `.runtime/state.json` 출력, 나머지는 `.runtime/cmd` 에 한 줄 추가 | |
 | `run-with-codex.sh` | tmux 좌우 분할: 왼쪽 Codex, 오른쪽 대시보드(mock) | |
 | `AGENTS.md` | **운영 채팅** AI 의 규칙 (명령 목록, status 필드, 답하는 법) | |
-| `claude-mod/merrybugmas/hooks/register.tsx` | Claude Code 옆 패널 mod: `--stream` 자식 프로세스를 띄워 JSON 프레임을 Raster 로 그림. `/merrybugmas [mock\|live] [noai] \| stop` | `startChild` · `send` · `ui.render` |
+| `claude-mod/merrybugmas/hooks/register.tsx` | Claude Code 옆 패널 mod (`hooks.json` 이 등록): `--stream` 자식 프로세스를 띄워 JSON 프레임을 Raster 로 그림. `/merrybugmas [mock\|live] [noai] \| stop` | `startChild` · `send` · `ui.render` |
+| `claude-mod/merrybugmas/hooks/pad.tsx` · `screen.tsx` | 패널 입력: `pad` 는 게임 화면 위 투명 입력판(키·클릭 → 게임), `screen` 은 맨 아래 한 줄(잡은 쥐 ID 클릭 → 기록 창) | |
 | `tools/screenshots.py` · `diagram.py` | README 이미지·구조도 생성 (Pillow) | |
 | `tools/eval_triage.py` | 트리아지 정확도 평가 (실제 OpenAI, 결과 `docs/eval/`) | |
 | `tools/sentry_seed.py` · `codex-autopilot.sh` | Sentry 테스트 이벤트 넣기 / Codex 자율 운영 루프 | |

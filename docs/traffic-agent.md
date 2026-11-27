@@ -86,7 +86,7 @@ idle(감시) ──경보 2초 이상──▶ 판단 ──▶ 레버 당김 �
 
 ```json
 {
-  "state": "watch",              // idle 감시 / think AI 판단 / ask 승인 대기 / watch 효과 확인 / flag 담당자 호출 / cool / off
+  "state": "watch",              // idle 감시 / think AI 판단 / ask 승인 대기 / watch 효과 확인 / flag 담당자 호출 / cool 조치 뒤 잠깐 대기 / off
   "auto": true,
   "levers": {"cache": true, "capacity": 4, "waitroom": false},
   "base":   {"cache": false, "capacity": 2, "waitroom": false},   // 원복 기준 (실서버는 처음 읽은 값)
