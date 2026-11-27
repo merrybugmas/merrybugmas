@@ -1,4 +1,5 @@
 import copy
+from collections import deque
 import json
 import queue
 import threading
@@ -52,6 +53,7 @@ class Session:
         self.serving = {}
         self.seen_processing = set()
         self.departures = {}
+        self.pending_departures = {False: deque(maxlen=32), True: deque(maxlen=32)}
         self.seen_finished = set()
         self.next_departure_at = 0
         self.next_failure_at = 0
@@ -240,7 +242,12 @@ class Session:
                 self.historical_requests = {rid for rid, request in self.requests.items()
                                             if terminal or 'finished_mono' in request}
                 self.restoring = False
+            previous_status = self.run['status'] if self.run else None
             self.run = snapshot
+            if snapshot['status'] in ('completed', 'stopped', 'failed') and previous_status != snapshot['status']:
+                counts = snapshot['client_counts']
+                label = {'completed': '실험 종료', 'stopped': '실험 중지 완료', 'failed': '실험 실패'}[snapshot['status']]
+                self.message = f"{label} — 완료 {counts['success']}건 / 실패 {counts['failed']}건 / 미전송 {counts['dropped']}건"
             self.baseline = self.baseline or snapshot['source_run_id']
             self.detail = detail
 
@@ -262,6 +269,8 @@ class Session:
             self.serving.clear()
             self.seen_processing.clear()
             self.departures.clear()
+            for pending in self.pending_departures.values():
+                pending.clear()
             self.seen_finished.clear()
             self.next_departure_at = world.t
             self.next_failure_at = world.t
@@ -300,37 +309,49 @@ class Session:
                                                        or world.t < person['until'])}
             self.departures = {rid: person for rid, person in self.departures.items()
                                if self.departure_position(world, person) != 'exited'}
-            # 완료와 실패의 표시 자리를 분리해 실패가 화면에서 빠지지 않도록 처리
-            outcome_counts = {False: 0, True: 0}
-            for rid in self.departures:
-                if rid in request_map:
-                    outcome_counts[self.failed(request_map[rid])] += 1
+            # 표시하지 못한 결과는 최근 대표 고객으로 보관해 다음 퇴장과 연결
+            capacity = self.departure_capacity(world)
             for request in sorted(requests, key=lambda r: r['request_id'] not in previous_serving):
                 rid = request['request_id']
                 if rid in self.historical_requests or 'finished_mono' not in request or rid in self.seen_finished or rid in self.serving:
                     continue
                 self.seen_finished.add(rid)
-                # 새 표시는 결과별 8명으로 제한하고 기존 고객은 퇴장까지 유지
                 bad = self.failed(request)
                 visible_waiter = bad and rid in previous and world.qpos(previous[rid].d)[0] >= 0
-                if outcome_counts[bad] + len(self.serving) >= 8 and rid not in previous_serving and not visible_waiter:
-                    continue
-                born = max(world.t, self.next_failure_at if bad else self.next_departure_at)
-                if bad:
-                    self.next_failure_at = born + .45
-                else:
-                    self.next_departure_at = born + .45
                 palette = previous[rid].pal.copy() if rid in previous else previous_serving[rid]['palette'].copy() if rid in previous_serving else ui.visitor_pal()
                 start = (world.gate_x - 4, world.bottom - 5)
                 if rid in previous_serving:
                     start = self.service_position(world, previous_serving[rid])
-                    born = world.t
                 elif visible_waiter:
                     start = world.qpos(previous[rid].d)
-                    born = world.t
-                self.departures[rid] = {'born': born, 'palette': palette, 'failed': bad,
-                                        'start': start, 'queue_exit': visible_waiter}
+                person = {'palette': palette, 'failed': bad, 'start': start, 'queue_exit': visible_waiter}
+                if rid in previous_serving or visible_waiter:
+                    person['born'] = world.t
+                    self.departures[rid] = person
+                else:
+                    self.pending_departures[bad].append((rid, person))
+            outcome_counts = {bad: sum(self.failed(request_map[rid]) == bad for rid in self.departures if rid in request_map)
+                              for bad in (False, True)}
+            for bad, pending in self.pending_departures.items():
+                next_at = self.next_failure_at if bad else self.next_departure_at
+                if not pending or world.t < next_at or outcome_counts[bad] + len(self.serving) >= capacity:
+                    continue
+                rid, person = pending.popleft()
+                actual_bad = self.failed(request_map[rid])
+                if actual_bad != bad:
+                    person['failed'] = actual_bad
+                    self.pending_departures[actual_bad].append((rid, person))
+                    continue
+                person['born'] = world.t
+                self.departures[rid] = person
                 outcome_counts[bad] += 1
+                if bad:
+                    self.next_failure_at = world.t + .45
+                else:
+                    self.next_departure_at = world.t + .45
+            if state['run'] and state['run']['status'] in ('completed', 'stopped', 'failed') and state['run']['telemetry_complete']:
+                for pending in self.pending_departures.values():
+                    pending.clear()
             # 실제 대기줄에 보이던 고객만 안내로 이동시키고 퇴장 자리도 미리 확보
             for request in requests:
                 rid = request['request_id']
@@ -340,7 +361,7 @@ class Session:
                 if self.failed(request) or rid not in previous:
                     continue
                 start_x, _ = world.qpos(previous[rid].d)
-                if start_x < 0 or len(self.serving) >= 4 or any(count + len(self.serving) >= 8 for count in outcome_counts.values()):
+                if start_x < 0 or len(self.serving) >= 4 or any(count + len(self.serving) >= capacity for count in outcome_counts.values()):
                     continue
                 slot = next(i for i in range(4) if i not in {p['slot'] for p in self.serving.values()})
                 duration = max(.3, previous[rid].d / 20)
@@ -360,6 +381,13 @@ class Session:
                 self.drawn_line = seq
         for snow in getattr(world, 'snow', []):
             snow[1] = (snow[1] + snow[2] * dt) % max(1, world.gpx)
+
+    # 화면의 출구 경로 길이에 맞춰 연속 퇴장 인원 확보
+    @staticmethod
+    def departure_capacity(world):
+        distance = world.gate_x + abs(world.bottom - world.gpx - 8) / 2
+        return max(8, int(distance / 4) + 2)
+
 
     # 대기줄에서 안내 위치까지 같은 고객을 연속 이동
     def service_position(self, world, person):
@@ -519,7 +547,10 @@ class Session:
             while len(frame) < 3 + scene_height + info_height:
                 frame.append(ui.seg_line([], width, 234))
         frame += ui.log_lines(world, width, log_height, ('all', 'traffic'), '[n]평소 [t]급증 [x]중지 [r]재실험 [g]안내 [q]종료')
-        frame[-1] = ui.seg_line([('  ' + state['message'], 203 if state['error'] else 223)], width, 235)
+        footer = state['message']
+        if snapshot and snapshot['status'] in ('completed', 'stopped', 'failed') and (self.departures or self.serving) and not state['error']:
+            footer += '  | 고객 퇴장 연출 중'
+        frame[-1] = ui.seg_line([('  ' + footer, 203 if state['error'] else 223)], width, 235)
         if self.guide:
             guide = ['성능 개선 에이전트 연결', '기준 실험: ' + (self.run_id or '먼저 실험을 시작하세요.'),
                      '왼쪽 Codex에 로그와 코드를 분석하고 병목을 수정하도록 요청하세요.',

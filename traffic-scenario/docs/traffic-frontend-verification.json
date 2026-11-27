@@ -116,5 +116,8 @@
   "old_request_events_not_reanimated": true,
   "blue_customer_continuity_tests_passed": 60,
   "instant_completed_requests_do_not_spawn_blue_customers": true,
-  "visible_waiting_failures_leave_from_current_position": true
+  "visible_waiting_failures_leave_from_current_position": true,
+  "continuous_customer_flow_tests_passed": 63,
+  "terminal_changed_rows_only": true,
+  "terminal_completion_footer": true
 }

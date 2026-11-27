@@ -129,6 +129,13 @@ def read_commands(world, bridge, state):
             world.command(line)
 
 
+# 바뀐 줄만 한 화면 갱신으로 묶어서 출력
+def frame_update(frame, previous):
+    changed = [f'\x1b[{row + 1};1H{line}' for row, line in enumerate(frame)
+               if row >= len(previous) or line != previous[row]]
+    return '\x1b[?2026h' + ''.join(changed) + '\x1b[?2026l' if changed else ''
+
+
 # 네이티브 터미널에서 마켓 실행
 def run_terminal(world, runtime):
     import termios
@@ -142,8 +149,9 @@ def run_terminal(world, runtime):
     previous = time.monotonic()
     try:
         tty.setcbreak(fd)
-        sys.stdout.write('\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1006h')
+        sys.stdout.write('\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[?1000h\x1b[?1006h')
         last_size = None
+        previous_frame = []
         while not state['quit']:
             now = time.monotonic()
             dt, previous = min(.2, now - previous), now
@@ -156,15 +164,17 @@ def run_terminal(world, runtime):
             if size != last_size:
                 sys.stdout.write('\x1b[2J')
                 last_size = size
+                previous_frame = []
             frame = compose(world, size.columns, size.lines, state['paused'])
             bridge.write_state(world, state['paused'])
-            sys.stdout.write('\x1b[H' + '\r\n'.join(frame))
+            sys.stdout.write(frame_update(frame, previous_frame))
+            previous_frame = frame
             sys.stdout.flush()
             time.sleep(max(0, 1 / ui.FPS - (time.monotonic() - now)))
     except KeyboardInterrupt:
         pass
     finally:
-        sys.stdout.write('\x1b[?1000l\x1b[?1006l\x1b[0m\x1b[?25h\x1b[?1049l')
+        sys.stdout.write('\x1b[?2026l\x1b[?7h\x1b[?1000l\x1b[?1006l\x1b[0m\x1b[?25h\x1b[?1049l')
         sys.stdout.flush()
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
 

@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import Mock
 
-from frontend.app import TrafficWorld, compose, handle_input, saved_run, ui
+from frontend.app import TrafficWorld, compose, frame_update, handle_input, saved_run, ui
 from frontend.session import Session
 
 
@@ -254,7 +254,8 @@ class TrafficFrontendTests(unittest.TestCase):
         session.apply([{'type': 'request.succeeded', 'request_id': f'ok-{i}', 'customer_id': f'c-{i}', 'data': {}}
                        for i in range(12)])
         world.update(.1)
-        self.assertEqual(len(session.departures), 8)
+        self.assertEqual(len(session.departures), 1)
+        self.assertEqual(len(session.pending_departures[False]), 11)
         session.apply([{'type': 'request.failed', 'request_id': 'bad', 'customer_id': 'bad-c',
                         'data': {'error_code': 'QUEUE_FULL'}}])
         world.update(.1)
@@ -334,7 +335,8 @@ class TrafficFrontendTests(unittest.TestCase):
         session.apply([{'type': 'request.succeeded', 'request_id': f'other-{i}', 'customer_id': f'c-{i}', 'data': {}}
                        for i in range(12)])
         world.update(.4)
-        self.assertEqual(len(session.departures), 7)
+        self.assertEqual(len(session.departures), 1)
+        self.assertLess(len(session.departures) + len(session.serving), session.departure_capacity(world))
         session.apply([{'type': 'request.succeeded', 'request_id': 'r', 'customer_id': 'c', 'data': {}}])
         world.update(.4)
         position = session.service_position(world, person)
@@ -362,6 +364,57 @@ class TrafficFrontendTests(unittest.TestCase):
             self.assertEqual(session.departure_position(world, session.departures[rid]), position)
             self.assertEqual(session.departures[rid]['palette'], palettes[rid])
             self.assertTrue(session.departures[rid]['failed'])
+
+    # 한 번에 받은 완료 결과도 8명에서 끊기지 않고 순서대로 표시
+    def test_completed_results_continue_beyond_eight_customers(self):
+        session = Session('http://127.0.0.1:8000')
+        world = TrafficWorld(session)
+        compose(world, 140, 45)
+        session.apply([{'type': 'request.succeeded', 'request_id': f'r-{i}', 'customer_id': f'c-{i}', 'data': {}}
+                       for i in range(24)])
+        for _ in range(12):
+            world.update(.46)
+        self.assertGreater(len(session.departures), 8)
+        self.assertTrue(session.pending_departures[False])
+        session.run = snapshot(status='completed')
+        world.update(.1)
+        self.assertFalse(session.pending_departures[False])
+        remaining = set(session.departures)
+        world.update(1)
+        self.assertTrue(set(session.departures).issubset(remaining))
+
+    # 실험이 끝나면 하단 시작 안내를 완료 결과로 변경
+    def test_footer_displays_experiment_completion(self):
+        completed = snapshot('r', 'completed')
+        completed['client_counts'].update(success=14, failed=3)
+
+        # 완료된 실험과 마지막 이벤트 응답 준비
+        def api(method, path, body=None):
+            if '/events?' in path:
+                return {'events': [], 'next_after_seq': 0, 'has_more': False}
+            return completed
+
+        session = Session('http://127.0.0.1:8000', transport=api)
+        session.run_id = 'r'
+        session.run = snapshot('r', 'running')
+        session.message = '실제 상품 검색 부하를 시작합니다.'
+        world = TrafficWorld(session)
+        session.poll()
+        frame = compose(world, 140, 45)
+        footer = ui.ANSI.sub('', frame[-1])
+        self.assertIn('실험 종료', footer)
+        self.assertIn('완료 14건', footer)
+        self.assertIn('실패 3건', footer)
+
+    # 고정 캐릭터 줄은 다시 쓰지 않고 변경된 줄만 동기 출력
+    def test_frame_updates_only_changed_rows(self):
+        old = ['fixed blue employee', 'old footer']
+        self.assertEqual(frame_update(old, old), '')
+        output = frame_update(['fixed blue employee', '실험 종료'], old)
+        self.assertNotIn('fixed blue employee', output)
+        self.assertIn('\x1b[2;1H실험 종료', output)
+        self.assertTrue(output.startswith('\x1b[?2026h'))
+        self.assertTrue(output.endswith('\x1b[?2026l'))
 
 
 if __name__ == '__main__':

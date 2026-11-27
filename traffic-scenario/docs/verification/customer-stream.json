@@ -1,0 +1,38 @@
+{
+  "normal": {
+    "command": "normal 300 9",
+    "run_id": "run-35f753ae219448e6af2d",
+    "success_representatives": 19,
+    "failure_representatives": 0,
+    "max_simultaneous_departures": 19,
+    "footer": "실험 종료 — 완료 300건 / 실패 0건 / 미전송 0건  | 고객 퇴장 연출 중",
+    "changed_output_ratio": 0.803,
+    "counts": {
+      "planned": 300,
+      "sent": 300,
+      "success": 300,
+      "failed": 0,
+      "pending": 0,
+      "dropped": 0
+    }
+  },
+  "surge": {
+    "command": "surge 1000 .5",
+    "run_id": "run-2ab04162f01e49a68719",
+    "success_representatives": 16,
+    "failure_representatives": 4,
+    "max_simultaneous_departures": 19,
+    "footer": "실험 종료 — 완료 393건 / 실패 607건 / 미전송 0건  | 고객 퇴장 연출 중",
+    "changed_output_ratio": 0.805,
+    "counts": {
+      "planned": 1000,
+      "sent": 1000,
+      "success": 393,
+      "failed": 607,
+      "pending": 0,
+      "dropped": 0
+    }
+  },
+  "employee_remained_visible": true,
+  "visual_check_scope": "Actual backend and rendered frames; no physical VS Code screen capture"
+}
