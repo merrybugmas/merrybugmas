@@ -57,7 +57,7 @@ MERRY BUGMAS 는 세 화면을 하나의 게임 장면으로 합친다. 트래�
 | 잡은 쥐 기록 · 개요 | 처리 이력(결과·ID·판정·병정·근거), 트래픽·Sentry 카드 | ■ 완료 |
 | Sentry 실연동 | `--live`: 실제 Sentry 프로젝트의 미해결 이슈를 읽어 쥐로 만들고 AI 가 그 제목을 판정. 읽기 전용, 실패 시 mock 폴백 | ■ 완료 (테스트 프로젝트 + 데모 웹앱으로 검증) |
 | 🧝 엘프 — 트래픽 대응 에이전트 | 밀림 감지(5xx ≥5% · 응답 ≥300ms · 대기 요청) → 판단(규칙, OpenAI 켜지면 경보마다 첫 판단만 AI) → 레버: 🎁 캐시 · 🧾 계산대(처리 슬롯) 증설은 자동, 🎫 번호표(넘치는 요청 429)는 사람 승인 후, API 장애면 담당자 호출 → 10초 뒤 숫자로 효과 확인 → 잠잠하면 원복. `--live` 에서는 데모 서버의 실제 레버(`/admin/levers`)를 바꾼다. 채팅 `./market tell 엘프 승인/보고/캐시 켜` | ■ 완료 (데모 서버 실측: 5xx 16.9→0.1%, 응답 994→76ms. AI 판단은 가짜 응답 테스트로만 확인) |
-| 실행 모드 | mock / live, OpenAI 켬 · 끔(`--no-ai`) · 녹화 재생(`--replay`). Claude Code 옆 패널에서 `/merrybugmas mock noai` 로 Sentry·트래픽 둘 다 mock + OpenAI 0회 | ■ 완료 |
+| 실행 모드 | mock / live, OpenAI 켬 · 끔(`--no-ai`) · 녹화 재생(`--replay`). mock 모드는 키가 있어도 OpenAI 0회(`--ai` 로만 켬). Claude Code 옆 패널에서 `/merrybugmas mock` 로 Sentry·트래픽 둘 다 mock + OpenAI 0회 | ■ 완료 |
 | 트래픽 실연동 | `--live`: 실제 서버의 Prometheus 형식 `/metrics` 요청 수 카운터를 1초마다 읽어 rps 로 줄을 세운다. 같은 엔드포인트의 웹 지표(5xx 비율 · 평균 응답 시간 · 브라우저 Web Vitals LCP/CLS/INP/TTFB)도 화면과 현황 JSON 에 표시. 읽기 실패 시 mock 폴백 | ■ 완료 (로컬 데모 서버로 검증. Grafana 경유는 미구현) |
 
 ## Ⅳ. AI 기술 활용 및 적용 방식
@@ -87,7 +87,7 @@ MERRY BUGMAS 는 세 화면을 하나의 게임 장면으로 합친다. 트래�
 
 **○ 프로젝트 구현 결과 및 완성수준**
 
-- **실제 작동 범위**: `python3 xmas_market.py` 하나로 타이틀부터 메뉴, 6개 서비스 × 3개 시나리오 스테이지까지 모두 동작한다. 외부 패키지와 API 키가 필요 없다. `OPENAI_API_KEY` 를 넣으면 AI 병정 모드(명령 해석·트리아지·브리핑)가 켜지고, `./run-with-codex.sh` 로 Codex 채팅과 나란히 띄운다.
+- **실제 작동 범위**: `python3 xmas_market.py` 하나로 타이틀부터 메뉴, 6개 서비스 × 3개 시나리오 스테이지까지 모두 동작한다. 외부 패키지와 API 키가 필요 없다. `OPENAI_API_KEY` 를 넣고 `--ai`(mock) 또는 `--live` 로 띄우면 AI 병정 모드(명령 해석·트리아지·브리핑)가 켜지고(mock 기본은 OpenAI 0회), `./run-with-codex.sh` 로 Codex 채팅과 나란히 띄운다.
 - **테스트·검증**: `tests/test_smoke.py` 35개 + `tests/test_elf.py` 17개, 52개 테스트가 모두 통과한다(약 7초, 네트워크 없이).
   - 18개 화면 조합 렌더
   - 키워드 명령
@@ -141,7 +141,7 @@ MERRY BUGMAS 는 세 화면을 하나의 게임 장면으로 합친다. 트래�
 |---|---|
 | 접속 및 실행방법 | `git clone https://github.com/merrybugmas/merrybugmas && cd merrybugmas && python3 xmas_market.py --replay` (키·로그인 없이, 녹화된 실제 AI 판정으로 재생) |
 | 테스트 계정 | 해당 없음 (로그인 없음) |
-| 주요 확인기능 | 1분 시나리오: 아무 키 → 메뉴에서 WEB · Sentry 버그 · START → `b`(쥐 떼) → 병정 출동·처리 → `r`(잡은 쥐 기록) → `1`(트래픽) → `t`(급증: 엘프가 캐시 켜고 계산대 증설) → `0`(개요). 다른 터미널에서 `./market tell 진저 보고`, `./market tell 엘프 보고`, `./market brief`. AI 모드: `export OPENAI_API_KEY=…` 후 실행하면 첫 로그에 "AI 병정 모드" 표시 |
+| 주요 확인기능 | 1분 시나리오: 아무 키 → 메뉴에서 WEB · Sentry 버그 · START → `b`(쥐 떼) → 병정 출동·처리 → `r`(잡은 쥐 기록) → `1`(트래픽) → `t`(급증: 엘프가 캐시 켜고 계산대 증설) → `0`(개요). 다른 터미널에서 `./market tell 진저 보고`, `./market tell 엘프 보고`, `./market brief`. AI 모드: `export OPENAI_API_KEY=…` 후 `python3 xmas_market.py --ai` 로 실행하면 첫 로그에 "AI 병정 모드" 표시 |
 | 권장 실행환경 | macOS / Linux, 256색 터미널 100x30 이상 (macOS · Python 3.9 에서 확인). Windows 는 WSL. Codex 연동은 tmux 권장 |
 | 기타 유의사항 | **API 키 없이 AI 판정 보기**: `python3 xmas_market.py --replay` 로 실행하면, 녹화해 둔 실제 OpenAI 트리아지 결과(판정·근거·수정 요약)로 재생한다. `--replay` 를 빼면 AI 없는 키워드·mock 모드다. **실연동**(`--live`)은 본인 Sentry 토큰과 데모 서버(merrybugmas/demo-web)가 필요해 심사 환경에서는 시연영상으로 확인한다. 터미널의 "애매한 폭 문자를 2칸으로" 옵션은 끈다. API 키는 문서에 넣지 않으며, 키 없이도 전 기능이 키워드·mock 으로 동작한다. 테스트: `python3 -m unittest discover -s tests -v` |
 

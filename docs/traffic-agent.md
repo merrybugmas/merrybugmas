@@ -67,7 +67,7 @@ idle(감시) ──경보 2초 이상──▶ 판단 ──▶ 레버 당김 �
 - 응답 스키마 `traffic_lever`: `{"lever": cache|capacity|waitroom|human|none, "reason": "...", "say": "..."}`
 - 한 번 실행에 `XMAS_AI_TRAFFIC_MAX`(기본 5)회까지. 판(서비스)을 바꿔도 이어서 센다. 다 쓰면 로그에 "AI 예산 다 씀" 후 규칙으로
 - AI 가 이미 쓴 레버를 고르거나, 실패하거나, 12초 안에 답이 없으면 규칙으로
-- `--replay`(녹화 재생)·`--no-ai`·키 없음이면 묻지 않는다
+- mock 모드(기본, `--ai` 없음)·`--replay`(녹화 재생)·`--no-ai`·키 없음이면 묻지 않는다
 - 엘프에게 하는 채팅 명령은 키워드로만 처리한다 (OpenAI 0회)
 
 ## 5. 채팅 명령 (`./market tell 엘프 <말>`)
@@ -116,4 +116,4 @@ cd ~/merrybugmas && python3 xmas_market.py --live         # 또는 패널: /merr
 ./market tell 엘프 보고
 ```
 
-mock 으로만 볼 때: `python3 xmas_market.py --no-ai` → 🎄 트래픽 → `t`(급증). 엘프가 같은 순서로 대응한다.
+mock 으로만 볼 때(OpenAI 0회): `python3 xmas_market.py` → 🎄 트래픽 → `t`(급증). 엘프가 같은 순서로 대응한다.

@@ -2382,7 +2382,8 @@ def attach_ai(world, use_ai=True, replay=None):
         world.ai = ai.Brain()
         world.log("🧠 AI 병정 모드 (%s) - 명령 해석·트리아지·브리핑" % world.ai.model, 141, "all")
     else:
-        world.log("키워드 모드 - OPENAI_API_KEY 를 설정하면 AI 병정이 된다", 245, "all")
+        world.log("키워드 모드 - OpenAI 안 씀 (mock 모드는 기본 0회: --live 또는 --ai 로 켠다)" if ai is not None and ai.available()
+                  else "키워드 모드 - OPENAI_API_KEY 를 설정하면 AI 병정이 된다", 245, "all")
 
 
 def attach_live(world, feed=None):
@@ -2680,11 +2681,15 @@ def main():
     ap.add_argument("--skip-intro", action="store_true", help="타이틀 없이 메뉴부터")
     ap.add_argument("--stream", action="store_true", help="옆 패널용: 프레임을 JSON 줄로 stdout 에 (크기는 --size)")
     ap.add_argument("--no-ai", action="store_true", help="OPENAI_API_KEY 가 있어도 AI 병정을 끈다 (키워드·mock 판정)")
+    ap.add_argument("--ai", action="store_true",
+                    help="mock 모드에서도 OpenAI 를 쓴다 (기본: OpenAI 는 --live 일 때만, mock 은 호출 0회)")
     ap.add_argument("--replay", nargs="?", const=REPLAY_DEFAULT, metavar="JSONL",
                     help="API 키 없이 녹화된 실제 AI 트리아지 결과를 재생 (기본 recordings/ai.jsonl)")
     ap.add_argument("--live", action="store_true",
                     help="실연동(읽기 전용): 쥐 = 실제 Sentry 미해결 이슈 (.env 의 SENTRY_*), 트래픽 = 실제 서버 /metrics (TRAFFIC_METRICS_URL)")
     args = ap.parse_args()
+    # mock 모드(--live 없음)는 OpenAI 를 부르지 않는다 (크레딧 보호). --ai 로만 켠다. --replay 는 API 를 안 쓰니 그대로
+    args.no_ai = args.no_ai or not (args.live or args.ai or args.replay)
     if args.seed is not None:
         R.seed(args.seed)
     if args.stream:

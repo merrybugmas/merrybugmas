@@ -6,8 +6,8 @@ import type { Register } from 'claude-code'
  * 게임 화면 위에 투명 입력판(pad.tsx)을 덮어, 한 번 클릭하면 방향키·Enter·클릭이 게임으로 간다.
  *
  *   /merrybugmas            패널 열기 (게임을 타이틀부터 새로 시작, 실연동 --live: .env 에 설정된 Sentry·트래픽만 붙고 나머지는 mock)
- *   /merrybugmas mock       mock 모드: Sentry·트래픽 둘 다 mock 데이터 (.env 의 실연동 설정을 무시한다)
- *   /merrybugmas ... noai   OpenAI 를 부르지 않는다 (키워드 판정·규칙 엘프). mock 이나 live 뒤에 붙인다
+ *   /merrybugmas mock       mock 모드: Sentry·트래픽 둘 다 mock 데이터 + OpenAI 호출 0회 (.env 의 실연동 설정을 무시한다)
+ *   /merrybugmas noai       실연동인데 OpenAI 를 부르지 않는다 (키워드 판정·규칙 엘프). mock 은 원래 0회
  *   /merrybugmas stop       게임 끄고 패널 닫기
  *
  * 패널 → 게임 입력은 <프로젝트>/.runtime/pane_cmd ('번호<TAB>명령' 줄들, 번호가 커진 것만 읽힌다).
@@ -153,7 +153,7 @@ async function registerCommand($: any, tries: number): Promise<void> {
   try {
     await $.command.register({
       name: 'merrybugmas',
-      description: 'MERRY BUGMAS 대시보드를 옆 패널에 띄운다 (mock = 둘 다 mock 데이터, noai = OpenAI 끔, stop = 끄기)',
+      description: 'MERRY BUGMAS 대시보드를 옆 패널에 띄운다 (mock = 둘 다 mock 데이터 + OpenAI 0회, noai = 실연동에서 OpenAI 끔, stop = 끄기)',
       argumentHint: '[mock|live] [noai] | stop',
       aliases: ['xmas', 'marrybugmas'],
       immediate: true,
@@ -190,7 +190,7 @@ export const register: Register = on => {
     latest = { cols: 0, blocks: [], note: null }
     await start($)
     await $.ui.open({ id: PANE, title: TITLE, focus: true })
-    const how = `${mode.live ? '실연동(--live: .env 에 설정된 Sentry·트래픽)' : 'mock 모드(Sentry·트래픽 모두 mock)'}${mode.noai ? ' · OpenAI 끔' : ''}`
+    const how = `${mode.live ? '실연동(--live: .env 에 설정된 Sentry·트래픽)' : 'mock 모드(Sentry·트래픽 모두 mock · OpenAI 안 씀)'}${mode.noai && mode.live ? ' · OpenAI 끔' : ''}`
     return { text: projectDir ? `MERRY BUGMAS 를 타이틀부터 새로 시작했습니다 - ${how}. 게임 화면을 한 번 클릭하면 방향키·Enter 로 조작합니다 (Esc 는 입력창으로).` : latest.note ?? '' }
   })
 

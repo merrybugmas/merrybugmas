@@ -31,7 +31,7 @@
 - 병정에게 묻는 질문("진저야 가장 큰 에러가 뭐였어?")도 `./market tell <문장>` 으로 넘긴다. 병정이 기록을 보고 말풍선으로 답한다.
   병정의 답은 모델이 쓴 것이니, 채팅에서 숫자를 말할 때는 `./market status` 로 확인한다.
 
-- AI 병정: 대시보드에 `OPENAI_API_KEY` 가 있으면 병정이 OpenAI API 로 문장을 해석하고(묘사로 가리킨 쥐도) 이슈를 판정한다.
+- AI 병정: 대시보드에 `OPENAI_API_KEY` 가 있고 `--live`(또는 mock 에서 `--ai`)로 띄웠으면 병정이 OpenAI API 로 문장을 해석하고(묘사로 가리킨 쥐도) 이슈를 판정한다.
   `status` 의 `ai.on` 으로 확인. 판정 근거는 `mice[].note`·`history[].note`, 판정 대기 중인 쥐는 `kind: "pending"`.
   AI 가 켜져 있으면 사용자 말을 굳이 키워드로 바꾸지 말고 `./market tell <문장>` 으로 그대로 넘겨도 된다.
 

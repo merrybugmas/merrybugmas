@@ -8,10 +8,10 @@
 화면은 전부 반블록 문자 `▀` 로 그린 픽셀아트다. **기본은 mock 데이터 PoC** 이고, `--live` 로 실제 Sentry 미해결 이슈와 실제 서버의 요청 수(rps)를 읽어 올 수 있다(읽기 전용).
 
 ```bash
-python3 xmas_market.py          # 대시보드 (60x22 이상, 256색, 의존성 없음, API 키 없이도 동작)
+python3 xmas_market.py          # 대시보드 mock 모드 (60x22 이상, 256색, 의존성 없음, OpenAI 호출 0회)
 export OPENAI_API_KEY=...       # (선택, .env 에 적어도 됨) 병정이 OpenAI API 로 명령을 해석하고 이슈를 판정한다
+python3 xmas_market.py --ai     # mock 데이터 + OpenAI (키 필요. mock 은 --ai 를 줘야만 OpenAI 를 쓴다)
 python3 xmas_market.py --replay # 키 없이: 녹화해 둔 실제 AI 트리아지 결과로 재생
-python3 xmas_market.py --no-ai  # mock 데이터 + OpenAI 호출 0회 (엘프·병정 모두 규칙/키워드)
 python3 xmas_market.py --live   # (선택) 쥐 = 실제 Sentry 미해결 이슈, 줄 = 실제 서버 rps. .env 설정 필요
 ./run-with-codex.sh             # 왼쪽 Codex 채팅 + 오른쪽 대시보드 (tmux 분할, 없으면 Terminal 창 2개)
 ./run-with-codex.sh auto        # 왼쪽 Codex 자율 운영자: 사람 없이 Codex 가 30초마다 판단해 병정을 지휘
@@ -21,7 +21,7 @@ python3 xmas_market.py --live   # (선택) 쥐 = 실제 Sentry 미해결 이슈,
 
 | 문서 | 내용 |
 |---|---|
-| [docs/run-modes.md](docs/run-modes.md) | 실행 모드: mock / live, OpenAI 켬·끔·녹화 재생, 옆 패널 `/merrybugmas mock noai`, 환경변수 |
+| [docs/run-modes.md](docs/run-modes.md) | 실행 모드: mock / live, OpenAI 켬·끔·녹화 재생, 옆 패널 `/merrybugmas mock`, 환경변수 |
 | [docs/traffic-agent.md](docs/traffic-agent.md) | 🧝 엘프 — 트래픽 대응 에이전트: 감지·판단·레버·원복, AI 예산, 채팅 명령, `status` 필드, 측정 결과 |
 | [AGENTS.md](AGENTS.md) | 채팅 쪽 AI(Codex·Claude Code)가 대시보드를 읽고 지휘하는 규칙 |
 | [docs/submission-draft.md](docs/submission-draft.md) | 공모 제출 초안 |
@@ -107,7 +107,7 @@ MERRY BUGMAS 는 이 셋을 **한 장면**으로 합친다. 트래픽은 줄, �
 ```
 
 병정은 `1`·`2`·`3`, `병정2`, 이름, `모두` 로 부른다. 이름 없이 쥐를 지목하면 놀고 있는 병정 하나가 맡는다.
-`OPENAI_API_KEY` 가 없으면 키워드로 알아듣는다. 있으면 아래처럼 OpenAI API 가 해석한다.
+`OPENAI_API_KEY` 가 없거나 mock 모드(기본)면 키워드로 알아듣는다. 키가 있고 `--live` 또는 `--ai` 로 띄우면 아래처럼 OpenAI API 가 해석한다.
 
 ## AI 구조 — 운영자(Codex)가 병정(OpenAI API)을 지휘한다
 
@@ -125,7 +125,7 @@ MERRY BUGMAS 는 이 셋을 **한 장면**으로 합친다. 트래픽은 줄, �
 위 두 화면은 실제 OpenAI API(gpt-5-mini) 호출로 찍었다 (`python3 tools/screenshots.py --ai-only`).
 
 - 출력은 JSON Schema(strict)로 받아 그대로 게임 동작에 연결한다. 호출은 백그라운드 스레드라 화면이 멈추지 않는다.
-- 키가 없거나 호출이 실패하면 키워드 해석·mock 판정으로 돌아간다 (작전 로그에 "키워드로 처리"). `--no-ai` 로 끌 수도 있다.
+- 키가 없거나 호출이 실패하면 키워드 해석·mock 판정으로 돌아간다 (작전 로그에 "키워드로 처리"). mock 모드는 `--ai` 를 주지 않으면 OpenAI 를 부르지 않고, `--live` 에서도 `--no-ai` 로 끌 수 있다.
 - 환경변수(레포의 `.env` 도 읽는다, git 제외): `OPENAI_API_KEY`, `XMAS_AI_MODEL`(기본 `gpt-5-mini`), `XMAS_AI_EFFORT`(기본 `low`), `XMAS_AI=off`, `XMAS_AI_RECORD=경로`(트리아지 녹화).
 - **녹화 재생** `--replay`: `recordings/ai.jsonl` 에 녹화해 둔 실제 OpenAI 트리아지 결과를 같은 이슈 제목에 다시 쓴다. 키 없이 AI 판정 화면을 볼 수 있다. 녹화에 없는 이슈와 명령 해석·브리핑은 키워드·mock 으로 처리하며, 응답을 새로 지어내지 않는다.
 
@@ -145,7 +145,7 @@ Codex·Claude Code 는 이 폴더에서 `AGENTS.md` 를 읽고, 대시보드와�
 - 채팅이 `./market start WEB sentry`, `./market tell …`, `./market say …`, `./market outbreak 3` 등을 실행하면 `.runtime/cmd` 를 거쳐 바로 반영된다.
 - 사람도 같은 명령을 쓸 수 있다. 목록은 `./market help`. `./market brief` 는 AI 운영 브리핑.
 - Claude Code 옆 패널에 띄울 때는 `python3 xmas_market.py --stream --size 90x40` 이 프레임을 JSON 줄로 내보내고, `.runtime/pane_cmd` 로 키·클릭을 받는다.
-- 그 패널 mod 는 `claude-mod/merrybugmas/` 에 있다. 이 폴더에서 `claude --plugin-dir claude-mod/merrybugmas` 로 열면 패널에 대시보드가 실연동(`--live`)으로 뜨고, 병정이 연 PR 이 클릭 링크로 보인다. `/merrybugmas` 로 다시 시작, `/merrybugmas mock` 이면 Sentry·트래픽 둘 다 mock, `/merrybugmas mock noai` 면 OpenAI 도 끈다, `/merrybugmas stop` 으로 끈다 ([docs/run-modes.md](docs/run-modes.md))
+- 그 패널 mod 는 `claude-mod/merrybugmas/` 에 있다. 이 폴더에서 `claude --plugin-dir claude-mod/merrybugmas` 로 열면 패널에 대시보드가 실연동(`--live`)으로 뜨고, 병정이 연 PR 이 클릭 링크로 보인다. `/merrybugmas` 로 다시 시작, `/merrybugmas mock` 이면 Sentry·트래픽 둘 다 mock + OpenAI 0회, `/merrybugmas noai` 면 실연동에서 OpenAI 만 끈다, `/merrybugmas stop` 으로 끈다 ([docs/run-modes.md](docs/run-modes.md))
 
 ## 키
 

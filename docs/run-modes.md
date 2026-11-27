@@ -2,6 +2,7 @@
 
 > 요약: **데이터**(mock / live)와 **두뇌**(OpenAI 켬 / 끔 / 녹화 재생)를 따로 고른다.
 > 키·로그인 없이도 전부 mock 으로 돈다. 실연동은 `.env` 에 설정된 것만 붙고 나머지는 mock 이다.
+> **mock 모드(`--live` 없음)는 OpenAI 를 부르지 않는다** — 키가 있어도 0회. mock 에서 AI 를 보려면 `--ai`.
 
 ## 1. 데이터: mock / live
 
@@ -18,15 +19,15 @@
 
 | 옵션 | 병정 명령 해석 | 쥐 판정 | 엘프 판단 | OpenAI 호출 |
 |---|---|---|---|---|
-| (키 없음) 또는 `--no-ai` 또는 `XMAS_AI=off` | 키워드 | mock 판정 | 규칙 | 0 |
-| `OPENAI_API_KEY` 있음 (기본) | OpenAI | OpenAI (쥐 1마리당 1회) | 경보마다 첫 판단 1회, 실행당 최대 `XMAS_AI_TRAFFIC_MAX`(5) | 아래 참고 |
+| mock 모드 기본 (`--live` 없음) · 키 없음 · `--no-ai` · `XMAS_AI=off` | 키워드 | mock 판정 | 규칙 | **0** |
+| 키 있음 + `--live` (또는 mock 에서 `--ai`) | OpenAI | OpenAI (쥐 1마리당 1회) | 경보마다 첫 판단 1회, 실행당 최대 `XMAS_AI_TRAFFIC_MAX`(5) | 아래 참고 |
 | `--replay` | 키워드 | 녹화된 실제 AI 판정 재생 | 규칙 | 0 |
 
 호출 횟수 감 잡기 (키가 있을 때):
 - 쥐 판정: mock 이면 쥐가 나올 때마다(몇 분이면 수십 회), live 면 실제 미해결 이슈 수만큼
 - 병정에게 말 걸기 1회당 1회, `./market brief` 1회
 - 엘프: 실행당 최대 5회. **엘프 채팅 명령은 0회**
-- 크레딧을 아끼려면 mock 으로 볼 때 `--no-ai` 를 붙인다
+- mock 은 기본이 0회다. `--live` 로 띄우면서 크레딧을 아끼려면 `--no-ai`
 
 ## 3. Claude Code 옆 패널
 
@@ -35,8 +36,7 @@
 | 명령 | 데이터 | OpenAI |
 |---|---|---|
 | `/merrybugmas` | live (`.env` 설정분) | 켬 |
-| `/merrybugmas mock` | Sentry·트래픽 **둘 다 mock** (`.env` 실연동 설정 무시) | 켬 |
-| `/merrybugmas mock noai` | 둘 다 mock | **끔** (크레딧 0) |
+| `/merrybugmas mock` | Sentry·트래픽 **둘 다 mock** (`.env` 실연동 설정 무시) | **끔** (크레딧 0) |
 | `/merrybugmas noai` | live | 끔 |
 | `/merrybugmas stop` | 끄고 패널 닫기 | |
 
