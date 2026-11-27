@@ -1,0 +1,23 @@
+{
+  "copied_existing_database": true,
+  "original_data_untouched": true,
+  "recovered_incomplete_runs": [
+    "run-439ab19092474022b750"
+  ],
+  "stop_run": {
+    "run_id": "run-236adff02aa5427c9c37",
+    "status": "stopped"
+  },
+  "new_run": {
+    "run_id": "run-6621e0bc40d546fd8267",
+    "status": "completed",
+    "counts": {
+      "planned": 3,
+      "sent": 3,
+      "success": 3,
+      "failed": 0,
+      "pending": 0,
+      "dropped": 0
+    }
+  }
+}

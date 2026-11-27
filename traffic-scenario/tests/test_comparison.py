@@ -67,3 +67,19 @@ def test_candidate_cannot_replace_baseline_answers(store, settings):
 
     assert result['verdict'] == 'regressed'
     assert result['correctness_passed'] is False
+
+
+# 재시작으로 수집이 중단된 실험은 나중에 이벤트가 와도 개선 판정에서 제외
+def test_interrupted_telemetry_is_not_comparable(store, settings):
+    policy(settings)
+    before = make_run(store, 'before')
+    finish_run(store, 'before')
+    make_run(store, 'after', artifact={**before['artifact'], 'schema_hash': 'indexed'})
+    finish_run(store, 'after')
+    with store.tx() as con:
+        run = store.get(con, 'before')
+        run['telemetry_interrupted'] = True
+        store.save(con, run)
+    with pytest.raises(ApiError) as error:
+        compare(store, settings, Compare(before_run_id='before', after_run_id='after', criteria_id='demo-v1'))
+    assert error.value.code == 'COMPARISON_NOT_READY'

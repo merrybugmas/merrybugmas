@@ -23,7 +23,7 @@ def create_app(settings=None):
     async def lifespan(app):
         try:
             await asyncio.to_thread(catalog.initialize, s.catalog, s.product_count)
-            store.recover()
+            store.recover(release_target=s.manage_target)
             await manager.start_target()
             yield
         finally:

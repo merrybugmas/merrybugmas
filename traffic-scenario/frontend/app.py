@@ -222,6 +222,15 @@ def run_stream(world, runtime, width, height):
         time.sleep(max(0, 1 / 8 - (time.monotonic() - now)))
 
 
+# 같은 서버의 마지막 실험에 다시 연결
+def saved_run(runtime, server):
+    try:
+        value = json.loads((runtime / 'state.json').read_text()).get('experiment') or {}
+        return value.get('run_id') if value.get('server') == server.rstrip('/') else None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
 # 트래픽 폴더 안에서 프론트 실행
 def main():
     parser = argparse.ArgumentParser(description='Merry Bug Mas 트래픽 전용 마켓')
@@ -232,9 +241,9 @@ def main():
     args = parser.parse_args()
     if not args.stream and not sys.stdin.isatty():
         parser.error('터미널에서 실행하세요. 옆 패널은 --stream을 사용하세요.')
-    session = Session(args.server, args.run_id)
-    world = TrafficWorld(session)
     runtime = Path(os.environ.get('XMAS_MARKET_RUNTIME', ROOT / '.runtime'))
+    session = Session(args.server, args.run_id or saved_run(runtime, args.server))
+    world = TrafficWorld(session)
     session.start()
     try:
         if args.stream:

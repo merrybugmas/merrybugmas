@@ -87,7 +87,7 @@ class Store:
             for row in c.execute("SELECT doc FROM runs"):
                 run = json.loads(row[0])
 
-                if run["status"] in ACTIVE or (run["target_seen"] and not run["telemetry_complete"]):
+                if run["status"] in ACTIVE or (run["target_seen"] and not run["telemetry_complete"] and not run.get("telemetry_interrupted")):
                     return True
 
             return False
@@ -150,7 +150,7 @@ class Store:
             return {"run_id": run_id, "status": "stopping"}
 
     # 제어 서버 재시작 시 중단된 실험 기록
-    def recover(self):
+    def recover(self, release_target=False):
         with self.tx() as c:
             for row in list(c.execute("SELECT doc FROM runs")):
                 r = json.loads(row[0])
@@ -160,6 +160,12 @@ class Store:
                     self.save(c, r)
                     self.event(c, r["run_id"], "run.failed", {"status": "failed"})
                     self.log(c, r["run_id"], "제어 프로세스 재시작으로 실험이 중단됐습니다. 원본을 확인하세요.", level="ERROR")
+
+                if release_target and r["target_seen"] and not r["telemetry_complete"] and not r.get("telemetry_interrupted"):
+                    # 검색 서버를 새로 시작할 때만 이전 서버의 미회수 요청 잠금 해제
+                    r["telemetry_interrupted"] = True
+                    self.save(c, r)
+                    self.log(c, r["run_id"], "검색 서버 재시작으로 이전 이벤트 수집이 중단됐습니다. 기록을 보존하며 비교 대상에서 제외합니다.", level="WARNING")
 
     # 수집 배치의 중복 여부 확인
     @staticmethod

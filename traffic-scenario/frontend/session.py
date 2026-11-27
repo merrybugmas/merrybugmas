@@ -87,8 +87,7 @@ class Session:
 
     # 미회수 요청을 포함한 진행 상태 확인
     def active(self):
-        return bool(self.run_id and (not self.run or self.run['status'] in ('pending', 'running', 'stopping')
-                                    or not self.run['telemetry_complete']))
+        return bool(self.run_id and (not self.run or self.run['status'] in ('pending', 'running', 'stopping')))
 
     # 키보드와 채팅 명령을 같은 작업 큐에 전달
     def command(self, text):
@@ -131,8 +130,8 @@ class Session:
                     self.error = None
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 with self.lock:
-                    self.error = str(exc)
-                    self.message = str(exc)
+                    self.error = '백엔드에 연결할 수 없습니다. 잠시 후 다시 시도합니다.' if isinstance(exc, urllib.error.URLError) else str(exc)
+                    self.message = self.error
             self.stopped.wait(0.3)
 
     # 실제 백엔드에 실험 조작 전달
@@ -231,7 +230,7 @@ class Session:
     # 기존 마켓 상태에 실험 정보 추가
     def status(self):
         with self.lock:
-            return {'run_id': self.run_id, 'baseline_run_id': self.baseline, 'run': copy.deepcopy(self.run),
+            return {'server': self.url, 'run_id': self.run_id, 'baseline_run_id': self.baseline, 'run': copy.deepcopy(self.run),
                     'busy': self.busy, 'error': self.error, 'message': self.message, 'agent': self.agent,
                     'selected': self.selected, 'detail': copy.deepcopy(self.detail), 'comparison': copy.deepcopy(self.comparison)}
 

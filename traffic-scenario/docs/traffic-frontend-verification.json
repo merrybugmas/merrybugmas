@@ -106,7 +106,7 @@
   "existing_tests_passed": 52,
   "relocated_stream_entry_verified": true,
   "motion_regression_tests_passed": 2,
-  "pending_fixes": [
-    "Startup connection-refused message before backend readiness"
-  ]
+  "pending_fixes": [],
+  "startup_recovery_tests_passed": 47,
+  "startup_recovery_evidence": "docs/verification/startup-recovery.json"
 }

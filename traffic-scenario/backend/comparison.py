@@ -28,7 +28,7 @@ def compare(store, settings, body):
         if r["status"] != "completed":
             raise ApiError(409, "INVALID_RUN_STATE", "완료된 실험만 비교할 수 있습니다.")
 
-        if not r["measurement_final"] or not r["telemetry_complete"] or not r["summary"] or r["summary"]["dropped"]:
+        if r.get("telemetry_interrupted") or not r["measurement_final"] or not r["telemetry_complete"] or not r["summary"] or r["summary"]["dropped"]:
             raise ApiError(409, "COMPARISON_NOT_READY", "수집 누락 또는 발생기 드롭이 있습니다.")
 
     if before["config"] != after["config"] or any(before["artifact"][k] != after["artifact"][k] for k in FIXED):
@@ -39,6 +39,7 @@ def compare(store, settings, body):
     # 같은 조건으로 반복한 실험 조회
     def cohort(reference):
         return [r for r in runs if r["status"] == "completed" and r["measurement_final"]
+                and not r.get("telemetry_interrupted")
                 and r["telemetry_complete"] and r["summary"] and not r["summary"]["dropped"]
                 and r["config"] == reference["config"] and r["artifact"] == reference["artifact"]]
 

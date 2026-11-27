@@ -84,3 +84,31 @@ def test_unknown_run_and_request(store):
     make_run(store)
     with pytest.raises(ApiError) as e:store.detail("run-001","missing")
     assert e.value.code=="REQUEST_NOT_FOUND"
+
+
+# 중지 후 이벤트를 덜 수집한 실험이 서버 재시작 후 새 실험을 막지 않음
+def test_managed_restart_releases_incomplete_run_without_faking_completion(store):
+    make_run(store, count=1)
+    store.events_ingest('run-001', EventBatch(batch_id='received', events=[event('received', query={'category': 'cookie', 'max_price': 20000})]))
+    store.measurements_ingest('run-001', MeasurementBatch(batch_id='stopped', measurements=[{
+        'request_id': 'req-1', 'customer_id': 'customer-0001', 'query': {'category': 'cookie', 'max_price': 20000},
+        'scheduled_offset_ms': 0, 'sent_offset_ms': 0, 'elapsed_ms': 5000, 'outcome': 'timeout', 'http_status': None, 'items': None
+    }], final=True, summary={'planned': 1, 'sent': 1, 'dropped': 0, 'elapsed_ms': 5000, 'termination': 'stopped'}))
+    assert store.busy()
+
+    store.recover(release_target=True)
+    previous = store.raw('run-001')
+    assert not store.busy()
+    assert previous['status'] == 'stopped'
+    assert previous['telemetry_interrupted']
+    assert not previous['telemetry_complete']
+    assert len(store.records('run-001')) == 1
+
+
+# 외부 관리 서버의 실행 중 요청은 임의로 해제하지 않음
+def test_external_restart_keeps_pending_target_protection(store):
+    make_run(store)
+    store.events_ingest('run-001', EventBatch(batch_id='received', events=[event('received', query={'category': 'cookie', 'max_price': 20000})]))
+    store.recover()
+    assert store.busy()
+    assert not store.raw('run-001').get('telemetry_interrupted')

@@ -1,7 +1,10 @@
 import unittest
+import json
+import tempfile
+from pathlib import Path
 from unittest.mock import Mock
 
-from frontend.app import TrafficWorld, compose, handle_input, ui
+from frontend.app import TrafficWorld, compose, handle_input, saved_run, ui
 from frontend.session import Session
 
 
@@ -14,6 +17,21 @@ def snapshot(run_id='run-1', status='running', queued=0):
 
 
 class TrafficFrontendTests(unittest.TestCase):
+    # 같은 서버에서 실행한 마지막 실험만 다시 연결
+    def test_reconnects_saved_run_for_matching_server(self):
+        with tempfile.TemporaryDirectory() as folder:
+            runtime = Path(folder)
+            (runtime / 'state.json').write_text(json.dumps({'experiment': {'server': 'http://127.0.0.1:8000', 'run_id': 'existing'}}))
+            self.assertEqual(saved_run(runtime, 'http://127.0.0.1:8000/'), 'existing')
+            self.assertIsNone(saved_run(runtime, 'http://127.0.0.1:9000'))
+
+    # 종료된 이전 실험의 시작 허용 여부는 백엔드가 판단
+    def test_stopped_run_does_not_block_frontend_start(self):
+        session = Session('http://127.0.0.1:8000', 'stopped')
+        session.run = snapshot('stopped', 'stopped')
+        self.assertFalse(session.active())
+        self.assertFalse(session.complete())
+
     # 기존 버그 화면과 같은 화면 규격 및 패널 출력 유지
     def test_existing_renderer_sizes_and_stream_protocol(self):
         session = Session('http://127.0.0.1:8000')
