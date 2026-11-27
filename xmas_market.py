@@ -2585,8 +2585,10 @@ def run_stream(w, h, skip_intro=False, use_ai=True, replay=None, live=False):
         for r in reversed(world.history):
             if r["id"] not in caught:
                 caught.append(r["id"])
+        prs = sorted(([v["pr"], v["url"], k, v.get("title", "")] for k, v in world.fixer.db.items())
+                     if world.fixer else [], reverse=True)  # 패널이 클릭할 수 있는 링크로 그린다
         out = json.dumps({"cols": w, "blocks": frame_blocks(compose(world, w, h, state["paused"])),
-                          "caught": caught[:8], "hist": world.show_hist},
+                          "caught": caught[:8], "hist": world.show_hist, "prs": prs[:8]},
                          ensure_ascii=False, separators=(",", ":"))
         if out != last:
             last = out
