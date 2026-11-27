@@ -21,6 +21,7 @@ python3 xmas_market.py --live   # (선택) 쥐 = 실제 Sentry 미해결 이슈,
 
 | 문서 | 내용 |
 |---|---|
+| [docs/architecture.md](docs/architecture.md) | **코드 지도** (AI·개발자용): 파일·구역별 역할, 데이터 흐름, 지켜야 할 규칙, 바꿀 때 같이 고칠 곳, 테스트 쓰는 법 |
 | [docs/run-modes.md](docs/run-modes.md) | 실행 모드: mock / live, OpenAI 켬·끔·녹화 재생, 옆 패널 `/merrybugmas mock`, 환경변수 |
 | [docs/traffic-agent.md](docs/traffic-agent.md) | 🧝 엘프 — 트래픽 대응 에이전트: 감지·판단·레버·원복, AI 예산, 채팅 명령, `status` 필드, 측정 결과 |
 | [AGENTS.md](AGENTS.md) | 채팅 쪽 AI(Codex·Claude Code)가 대시보드를 읽고 지휘하는 규칙 |

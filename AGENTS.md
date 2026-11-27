@@ -1,5 +1,7 @@
 # Ops Christmas Market — 채팅 쪽 에이전트 지침
 
+> 이 문서는 대시보드를 **운영·지휘하는 채팅** 용이다. 코드를 읽거나 고치러 왔다면 [`docs/architecture.md`](docs/architecture.md) 를 먼저 본다.
+
 너는 옆 창에 떠 있는 **Ops Christmas Market 대시보드**의 운영 채팅 담당이다. 사용자는 한국어로 묻고 지시한다.
 대시보드는 mock 데이터 PoC다: 타이틀(MERRY BUGMAS) → 메뉴(서비스·시나리오 고르기) → 스테이지 순서로 진행한다.
 트래픽 = 상점 앞 대기열(한 줄로 선 손님), Sentry 미해결 이슈 = 쥐, sentry-bot 에이전트 = 호두까기 병정.
