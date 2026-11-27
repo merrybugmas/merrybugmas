@@ -87,7 +87,7 @@ MERRY BUGMAS 는 세 화면을 하나의 게임 장면으로 합친다. 트래�
   - 가짜 OpenAI 응답으로 확인하는 명령 해석·트리아지·브리핑
   - API 실패 시 폴백, 사람 판정 우선, 판정 타임아웃, 형식 오류 응답, 429 재시도, 판이 바뀐 뒤 도착한 결과
   - 구현 뒤 별도 코드 리뷰를 거쳐, 지적된 결함 5건(사람 판정 덮어쓰기·판정 대기 고착·이상 응답 처리 등)을 고치고 회귀 테스트로 고정했다.
-- **AI 트리아지 정확도 평가**: 정답을 붙인 Sentry 이슈 제목 32건(fixable 14 · noise 10 · needs-human 8)을 `tools/eval_triage.py` 로 판정했다. 결과는 정확도 [N]/32 = [N]%, 평균 응답 [N]초다(`docs/eval/triage-gpt-5-mini.md`, 혼동 행렬 포함). [작성 — 평가 실행 후 숫자 채우기]
+- **AI 트리아지 정확도 평가 (실제 API)**: 정답을 붙인 Sentry 이슈 제목 32건(fixable 14 · noise 10 · needs-human 8)을 `tools/eval_triage.py` 로 gpt-5-mini 에 판정시켰다. 결과는 **정확도 29/32 = 90.6%**, 평균 응답 4.2초, 호출 실패 0건이다(`docs/eval/triage-gpt-5-mini.md`). 사람이 꼭 봐야 하는 needs-human 8건은 모두 맞혔다. 틀린 3건은 브라우저 저장소 차단, JSON 대신 HTML 응답, 출처 불명 Promise 거부처럼 사람도 판단이 갈리는 경계 사례였다. 시연 화면(`docs/images/ai.png`·`ai-history.png`)도 실제 API 호출로 찍었다(13회 호출, 실패 0).
 - **현재 제약사항**:
   - 트래픽·이슈 데이터는 mock 이다.
   - 병정의 fix·review·MR 은 연출이며, 실제 코드 수정 MR 은 만들지 않는다.

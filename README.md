@@ -99,12 +99,20 @@ MERRY BUGMAS 는 이 셋을 **한 장면**으로 합친다. 트래픽은 줄, �
 | 병정의 두뇌 | **OpenAI API** (`ai.py`) | ① **명령 해석**: "진저한테 503 에러 난 쥐부터 처리하라고 해" → `{병정 2, catch, MOBILE-2C1}`. 키워드에 없는 말·묘사로 가리킨 쥐도 현황 JSON 에서 찾는다. 잡담엔 병정 말투로 대답 ② **트리아지**: 이슈 제목을 보고 fixable / noise / needs-human 판정 + 근거 + MR 수정 요약 ③ **브리핑**: `./market brief` → 현황 3줄 + 권고 1줄 |
 | 시각화 | 대시보드 | AI 의 판정 근거가 작전 로그(🧠)·잡은 쥐 기록에 남는다. 판정을 기다리는 쥐는 `판정 중` 으로 보인다 |
 
+![AI 병정: 실제 gpt-5-mini 트리아지 근거가 작전 로그에 남는다](docs/images/ai.png)
+![잡은 쥐 기록: 건마다 AI 판정 근거·MR 수정 요약](docs/images/ai-history.png)
+
+위 두 화면은 실제 OpenAI API(gpt-5-mini) 호출로 찍었다 (`python3 tools/screenshots.py --ai-only`).
+
 - 출력은 JSON Schema(strict)로 받아 그대로 게임 동작에 연결한다. 호출은 백그라운드 스레드라 화면이 멈추지 않는다.
 - 키가 없거나 호출이 실패하면 키워드 해석·mock 판정으로 돌아간다 (작전 로그에 "키워드로 처리"). `--no-ai` 로 끌 수도 있다.
 - 환경변수(레포의 `.env` 도 읽는다, git 제외): `OPENAI_API_KEY`, `XMAS_AI_MODEL`(기본 `gpt-5-mini`), `XMAS_AI_EFFORT`(기본 `low`), `XMAS_AI=off`, `XMAS_AI_RECORD=경로`(트리아지 녹화).
 - **녹화 재생** `--replay`: `recordings/ai.jsonl` 에 녹화해 둔 실제 OpenAI 트리아지 결과를 같은 이슈 제목에 다시 쓴다. 키 없이 AI 판정 화면을 볼 수 있다. 녹화에 없는 이슈와 명령 해석·브리핑은 키워드·mock 으로 처리하며, 응답을 새로 지어내지 않는다.
 
 ### AI 트리아지 평가
+**결과 (gpt-5-mini, 2026-11-27): 정확도 29/32 = 90.6%, 평균 응답 4.2초, 호출 실패 0건** — [전체 결과·혼동 행렬](docs/eval/triage-gpt-5-mini.md).
+needs-human 8건은 모두 맞혔다. 틀린 3건은 경계 사례다: `sessionStorage access denied`(fixable → noise), JSON 자리에 HTML 이 온 파싱 오류(fixable → needs-human, 서버 응답 문제로 봄), `Object Not Found Matching Id`(noise → needs-human).
+
 `python3 tools/eval_triage.py --record recordings/ai.jsonl` 은 정답이 달린 Sentry 이슈 제목 32건(`tests/data/triage_eval.jsonl`: fixable 14 · noise 10 · needs-human 8)을 판정한다. 정확도·혼동 행렬·응답 시간을 `docs/eval/` 에 남기고, 같은 결과를 녹화 재생용으로도 쓴다.
 - `AGENTS.md` 는 채팅 에이전트용 운영 규약이다. 어떤 명령이 있고, 답하기 전에 무엇을 읽고, 무엇을 고치면 안 되는지를 적어 두면 Codex 가 그대로 따른다.
 
