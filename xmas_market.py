@@ -1860,7 +1860,7 @@ def history_lines(world, w, n):
                        ("· MR %d · noise %d · 사람 %d" % (cnt["fixed"], cnt["noise"], cnt["human"]), 250),
                        ("   │ " + per, 117), ("   [r·x·클릭] 닫기", 242)], w, 52)]
     lines.append(seg_line([(" " + pad("결과", 10) + pad("ID", 12) + pad("판정", 13) + pad("병정", 12) + pad("시각", 7)
-                            + "Sentry 제목", 242)], w, 237))
+                            + "AI 판정 근거 │ Sentry 제목", 242)], w, 237))
     live = [m for m in world.mice if m.state == "held" and m.issue["id"] == world.hist_sel]
     rows = []
     for m in live:  # 클릭한 쥐가 아직 처리 중이면 맨 위에
@@ -1878,7 +1878,7 @@ def history_lines(world, w, n):
                       (pad(r["kind"], 13), KIND_COL.get(r["kind"], 250)),
                       (pad("%d %s" % (r["soldier"], SOLDIER_NAMES[(r["soldier"] - 1) % len(SOLDIER_NAMES)]), 12), 250),
                       (pad("%02d:%02d" % (mm, ss), 7), 244),
-                      (r["title"] + ("  🧠 " + r["note"] if r.get("note") else ""), 250 if sel else 244)], sel))
+                      (("🧠 %s  │ " % r["note"] if r.get("note") else "") + r["title"], 250 if sel else 244)], sel))
     if not rows:
         rows.append(([("   아직 잡은 쥐가 없습니다 - 병정이 처리하면 여기에 쌓입니다", 244)], False))
     room = n - len(lines)

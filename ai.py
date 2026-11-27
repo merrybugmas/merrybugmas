@@ -287,7 +287,7 @@ class ReplayBrain:
                     dates.add(r.get("at", "?"))
         if not self.table:
             raise ValueError("녹화에 트리아지 결과가 없다: %s" % path)
-        self.model = "녹화 재생: %s, %s" % ("/".join(sorted(models)), max(dates))
+        self.model = "%s, %s" % ("/".join(sorted(models)), max(dates))
         self.calls = self.fails = 0
         self.last_error = None
         self.results = queue.Queue()
