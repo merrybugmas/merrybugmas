@@ -245,6 +245,8 @@ fixable 판정 → OpenAI 가 레포 소스(XMAS_FIX_FILES, 기본 app.js·serve
 [#2](https://github.com/merrybugmas/demo-web/pull/2) 선물 목록 items 확인,
 [#3](https://github.com/merrybugmas/demo-web/pull/3) 배송일 Invalid Date 방지. 셋 다 에러가 난 줄만 고친 1~3줄 수정이다.
 나머지는 백엔드 5xx 2건·HTML 을 JSON 으로 읽는 에러 1건을 사람에게, 광고 스크립트 1건을 noise 로 보냈다. OpenAI 호출 10회, 실패 0.
+#1~#3 은 다음 시연을 위해 닫았다(머지 안 함). 이후 실행에서는 앞서 사람에게 넘겼던 HTML→JSON 파싱 에러(WEB-J)를 fixable 로 판정해
+[#4](https://github.com/merrybugmas/demo-web/pull/4) (`/api/notice` 응답이 HTML 일 때 JSON.parse 방어)를 열었다. 같은 이슈도 실행마다 판정이 달라질 수 있어, PR 은 열기만 하고 머지는 사람이 한다.
 
 ### 병정에게 묻기
 AI 가 켜져 있으면 병정이 질문에도 답한다. 명령 해석에 최근 처리 기록 15건과 누적 통계를 같이 넘긴다.
