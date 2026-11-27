@@ -303,7 +303,10 @@ SCENARIOS = [
      ["Sentry 미해결 이슈 = 쥐. 병정(sentry-bot)이 출동해", "triage → fix → review → MR 로 처치한다."]),
     ("overview", "📊 개요", "숫자 대시보드",
      ["트래픽과 Sentry를 숫자·그래프로 한눈에.", "움직이는 장면 없이 1초에 한 번 갱신."]),
+    ("agents", "🤖 에이전트", "병정·엘프 한눈에",
+     ["병정 셋(sentry-bot)과 엘프(트래픽)가 지금 무엇을 하는지,", "맡은 일·처리 건수·마지막 대답을 카드로 본다."]),
 ]
+VIEW_NAMES = tuple(c[0] for c in SCENARIOS)
 
 
 def stars(v):
@@ -819,10 +822,18 @@ class World:
         if self.fixer is None:
             return
         for (gen, issue), res, err in self.fixer.poll():
-            if err is not None:
+            if isinstance(err, fixer.ReviewRejected):
+                issue["pr"], issue["pr_err"] = None, "Codex 리뷰 반려 - %s" % str(err)[:80]
+                self.log("🔍 Codex 리뷰 반려: %s - %s" % (issue["id"], str(err)[:70]), 208)
+            elif err is not None:
                 issue["pr"], issue["pr_err"] = None, "%s: %s" % (type(err).__name__, str(err)[:80])
             else:
                 issue["pr"] = res
+                rv = res.get("review") if isinstance(res, dict) else None
+                if rv and rv.get("verdict") == "approve":
+                    self.log("🔍 Codex 리뷰 승인: %s - %s" % (issue["id"], rv["reason"][:70]), 46)
+                elif rv:
+                    self.log("🔍 Codex 리뷰 못 함: %s - 사람 리뷰로 (%s)" % (issue["id"], rv["reason"][:50]), 245)
 
     def record(self, m, outcome, s, mr=None, pr=None):
         if outcome == "fixed":  # 처치한 쥐는 뒤쪽 우리로 날아간다
@@ -1107,7 +1118,7 @@ class World:
             self.phase, self.show_hist = "menu", False
         elif v == "intro":
             self.phase, self.intro_t = "intro", 0.0
-        elif v in ("overview", "traffic", "sentry"):
+        elif v in VIEW_NAMES:
             if self.service is None:  # 메뉴를 거치지 않고 바로 화면을 부르면 지금 고른 서비스로 시작
                 self.start_stage(self.svc_i, v)
                 return
@@ -1325,12 +1336,13 @@ class World:
             else:
                 self.log("채팅 지시: %s 쥐를 찾지 못함" % arg, 245)
         elif op == "view":
-            self.set_view({"0": "overview", "1": "traffic", "2": "sentry"}.get(arg, arg.lower()))
+            self.set_view({"0": "overview", "1": "traffic", "2": "sentry", "3": "agents",
+                           "agent": "agents", "에이전트": "agents"}.get(arg.lower(), arg.lower()))
         elif op in ("start", "stage", "service"):
             a = arg.split()
             idx = self.find_service(a[0]) if a else self.svc_i
             scn = a[1].lower() if len(a) > 1 else (self.view if self.phase == "play" else "sentry")
-            if idx is None or scn not in ("overview", "traffic", "sentry"):
+            if idx is None or scn not in VIEW_NAMES:
                 self.log("채팅 지시: 서비스/화면을 모름 (%s)" % arg[:30], 245, "all")
             else:
                 self.start_stage(idx, scn)
@@ -1758,12 +1770,12 @@ def bars(vals, n, top, rows):
     return out
 
 
-VIEWS = [("overview", "0 개요"), ("traffic", "1 🎄 트래픽"), ("sentry", "2 🐭 Sentry")]
+VIEWS = [("overview", "0 개요"), ("traffic", "1 🎄 트래픽"), ("sentry", "2 🐭 Sentry"), ("agents", "3 🤖 에이전트")]
 
 
 def header(world, w, paused):
     """맨 윗줄: 제목 + 탭(클릭 가능). 탭 위치를 world.hits 에 기록한다."""
-    title = [("  🎄 MERRY BUGMAS " if w >= 100 else " 🎄 ", 226, True), (" %s " % world.svc[0], 16, True, 223), ("  ", 7)]
+    title = [("  🎄 MERRY BUGMAS " if w >= 116 else " 🎄 ", 226, True), (" %s " % world.svc[0], 16, True, 223), ("  ", 7)]
     segs, x = list(title), seg_width(title) + 1
     label, _ = world.crowd_label()
     blink = int(world.t * 2) % 2
@@ -1906,8 +1918,150 @@ def compose_overview(world, w, h, paused):
             lines.append(seg_line([(" ", 7)] + row, w, 233))
         world.hits += [(1, w, 2, 1 + th, lambda: world.set_view("traffic")),
                        (1, w, 2 + th, 1 + bh, lambda: world.set_view("sentry"))]
-    keys = "[Esc]메뉴 [1]/클릭 트래픽 [2]/클릭 Sentry [t]급증 [b]쥐 떼 [space]정지 [q]종료"
+    keys = "[Esc]메뉴 [1]/클릭 트래픽 [2]/클릭 Sentry [3]에이전트 [t]급증 [b]쥐 떼 [space]정지 [q]종료"
     return lines + log_lines(world, w, LOG_H, ("all", "traffic", "sentry"), keys)
+
+SOLDIER_STATE_WORD = {"home": ("위병소 대기", 250), "walk": ("출동", 117), "triage": ("🔍 triage", 214),
+                      "fix": ("🔧 fix", 214), "review": ("👀 review", 214), "shoo": ("🧹 noise 쫓는 중", 245),
+                      "flag": ("📞 사람 호출", 226), "return": ("복귀 중", 250),
+                      "after": ("✔ 마무리", 46)}
+OUTCOME_WORD = {"fixed": ("MR", 46), "noise": ("noise", 245), "human": ("사람", 226)}
+
+
+def soldier_card(world, s, width, height):
+    """병정 한 명: 상태 · 맡은 쥐 · 처리 건수 · 최근 처리 · 마지막 대답."""
+    iw = width - 4
+    word, col = SOLDIER_STATE_WORD.get(s.state, (s.state, 250))
+    mine = [r for r in world.history if r["soldier"] == s.idx + 1]
+    n = {k: sum(1 for r in mine if r["outcome"] == k) for k in OUTCOME_WORD}
+    body = [[("  상태 ", 245), (word, col, True), ("  " + s.bubble if s.bubble and s.busy else "", 245),
+             ("   ⏸ 복귀 명령" if s.off else "", 208)]]
+    if height - 2 <= 3:  # 좁은 화면: 상태 · 맡은 쥐 · 처리 건수 · 마지막 대답을 두세 줄에
+        if s.target is not None:
+            body[0] += [("  │ ", 240), (s.target.issue["id"], 203, True), (" " + s.target.issue["title"], 250)]
+        body[0] += [("  │ 처리 %d건" % len(mine), 245)]
+        if s.speech:
+            body.append([("  💬 ", 183), (s.speech, 183)])
+        title = [("💂 병정%d %s" % (s.idx + 1, s.name), 231, True), (" · sentry-bot", 245)]
+        return card(width, height, title, "클릭 ▸ 전투", body, 117 if s.busy else (208 if s.off else 240))
+    if s.target is not None:
+        body.append([("  맡은 쥐 ", 245), (s.target.issue["id"], 203, True), (" " + s.target.issue["title"], 250)])
+    else:
+        body.append([("  맡은 쥐 -", 242)])
+    body.append([("  처리 ", 245), (str(len(mine)), 231, True), ("건   ", 245)]
+                + sum(([("%s %d  " % (OUTCOME_WORD[k][0], n[k]), OUTCOME_WORD[k][1])] for k in OUTCOME_WORD), []))
+    for i, r in enumerate(reversed(mine[-3:])):  # 최근 처리 3건 (새것 위)
+        tag, tcol = OUTCOME_WORD.get(r["outcome"], (r["outcome"], 250))
+        extra = " PR #%s" % r["pr"] if r.get("pr") else (" !%s" % r["mr"] if r.get("mr") else "")
+        body.append([("  최근 " if i == 0 else "       ", 245), (r["id"], 250, True), (" → %s%s" % (tag, extra), tcol)])
+    if s.speech:
+        body.append([])
+        body += [[("  💬 " if i == 0 else "     ", 183), (part, 183)] for i, part in enumerate(wrap_text(s.speech, iw - 6, 3))]
+    title = [("💂 병정%d %s" % (s.idx + 1, s.name), 231, True), (" · sentry-bot", 245)]
+    bc = 117 if s.busy else (208 if s.off else 240)
+    return card(width, height, title, "클릭 ▸ 전투", body, bc)
+
+
+def elf_card(world, width, height):
+    """엘프: 상태 · 레버 · 압력 · 승인 대기 · 최근 조치 · 마지막 대답."""
+    e = world.elf
+    iw = width - 4
+    st = e.state if e.auto else "off"
+    p = e.last or {}
+    body = [[("  ", 245)] + elf_segs(world)[1:]]
+    load = p.get("load")
+    seg = [("  부하 ", 245), ("-" if load is None else "%d%%" % round(load * 100), 231, True)]
+    if p.get("error_pct") is not None:
+        seg += [("  5xx ", 245), ("%.1f%%" % p["error_pct"], 203 if p["error_pct"] >= 5 else 250)]
+    if p.get("latency_ms") is not None:
+        seg += [("  응답 ", 245), ("%dms" % p["latency_ms"], 250)]
+    if p.get("waiting"):
+        seg += [("  대기 ", 245), (str(p["waiting"]), 250)]
+    if p.get("mock"):
+        seg.append(("  (추정)", 242))
+    body.append(seg)
+    if e.pending:
+        body.append([("  ⚠ 승인 대기: ", 226, True), (elf.LEVER_WORD.get(e.pending, e.pending), 226, True),
+                     ("  → '엘프 승인'/'거절'", 245)])
+    acts = e.actions[-2:]
+    body.append([("  조치 ", 245), (str(len(e.actions)), 231, True), ("건" + ("" if acts else " - 아직 없음"), 245)])
+    for a in reversed(acts):
+        body.append([("   · %s " % elf.LEVER_WORD.get(a["lever"], a["lever"]), 250),
+                     ("(%s) " % a["by"], 245), (a.get("result") or a.get("reason") or "", 242)])
+    if e.speech:
+        body.append([])
+        body += [[("  💬 " if i == 0 else "     ", 120), (part, 120)] for i, part in enumerate(wrap_text(e.speech, iw - 6, 2))]
+    title = [("🧝 엘프", 231, True), (" · 트래픽 대응", 245)]
+    bc = {"ask": 226, "flag": 203, "watch": 214, "think": 141}.get(st, 37)
+    return card(width, height, title, "클릭 ▸ 대기열", body, bc)
+
+
+def wrap_text(text, n, max_lines):
+    """화면 폭(한글 2칸) 기준으로 줄을 나눈다. 넘치면 마지막 줄 끝을 … 으로."""
+    out, cur = [], ""
+    for ch in text:
+        if dw(cur + ch) > n:
+            out.append(cur)
+            cur = ""
+        cur += ch
+    if cur:
+        out.append(cur)
+    if len(out) > max_lines:
+        out = out[:max_lines]
+        last = out[-1]
+        while last and dw(last) > n - 1:
+            last = last[:-1]
+        out[-1] = last + "…"
+    return out
+
+
+def compose_agents(world, w, h, paused):
+    """에이전트 오버뷰: 병정 셋 + 엘프를 카드로. 병정 카드는 전투, 엘프 카드는 대기열로 간다."""
+    lines = [header(world, w, paused)]
+    out = sum(1 for s in world.soldiers if s.busy)
+    e = world.elf
+    st = e.state if e.auto else "off"
+    summary = [("  🤖 에이전트 %d" % (len(world.soldiers) + 1), 231, True),
+               ("  │ 💂 출동 ", 250), ("%d/%d" % (out, len(world.soldiers)), 117, True),
+               ("  │ 🧝 ", 250), (elf.STATE_WORD.get(st, st), 120, True)]
+    if world.ai is not None:
+        summary += [("  │ 🧠 %s %d회" % (world.ai.model, world.ai.calls), 141)]
+    if world.fixer is not None:
+        summary += [("  │ 🔀 PR %d" % len(world.fixer.db), 245)]
+    lines.append(seg_line(summary, w, 235))
+    log_h = LOG_H if h >= 28 else 4
+    bh = h - 2 - log_h
+    soldiers = list(world.soldiers)
+    to_sentry, to_traffic = (lambda: world.set_view("sentry")), (lambda: world.set_view("traffic"))
+    if w >= 100:
+        cw_ = (w - 3) // 2
+        rh = bh // 2
+        cells = [(soldier_card(world, s, cw_, rh if i < 2 else bh - rh), to_sentry) for i, s in enumerate(soldiers)]
+        cells.append((elf_card(world, cw_, bh - rh), to_traffic))
+        for r in range(0, len(cells), 2):
+            pair = cells[r:r + 2]
+            y0 = len(lines) + 1
+            for (card_l, act), x0 in zip(pair, (2, 3 + cw_)):
+                world.hits.append((x0, x0 + cw_ - 1, y0, y0 + len(card_l) - 1, act))
+            rows = max(len(c) for c, _ in pair)
+            for i in range(rows):
+                segs = [(" ", 7)]
+                for c, _ in pair:
+                    segs += (fit(c[i], cw_) if i < len(c) else [(" " * cw_, 7)]) + [(" ", 7)]
+                lines.append(seg_line(segs, w, 233))
+    else:
+        each = max(3, bh // (len(soldiers) + 1))
+        cards = [(soldier_card(world, s, w - 2, each), to_sentry) for s in soldiers]
+        cards.append((elf_card(world, w - 2, max(4, bh - each * len(soldiers))), to_traffic))
+        for c, act in cards:
+            y0 = len(lines) + 1
+            world.hits.append((1, w, y0, y0 + len(c) - 1, act))
+            lines += [seg_line([(" ", 7)] + row, w, 233) for row in c]
+    while len(lines) < h - log_h:
+        lines.append(seg_line([], w, 233))
+    lines = lines[:h - log_h]
+    keys = "[Esc]메뉴 [0]개요 [1]트래픽 [2]Sentry · 카드 클릭 ▸ 그 화면 [q]종료"
+    return lines + log_lines(world, w, log_h, ("all", "traffic", "sentry"), keys)
 
 
 def title_canvas(world, w, h, density=1.0):
@@ -2170,6 +2324,9 @@ def compose(world, w, h, paused=False):
     if world.view == "overview":
         world.layout(w, h - 3 - LOG_H)
         return compose_overview(world, w, h, paused)[:h]
+    if world.view == "agents":
+        world.layout(w, h - 3 - LOG_H)
+        return compose_agents(world, w, h, paused)[:h]
 
     lines = [header(world, w, paused)]
     n = max(10, w - 24)
@@ -2188,7 +2345,7 @@ def compose(world, w, h, paused=False):
         n2 = max(10, w - 18 - seg_width(es))
         lines.append(seg_line([("  트래픽 30초 ", 250), (spark(world.hist, n2, world.peak), 51), ("  │ ", 240)] + es, w, 234))
         lines += world.draw("traffic").lines()
-        keys = "[Esc]메뉴 [0]개요 [2]Sentry [t]트래픽 급증 [space]정지 [q]종료"
+        keys = "[Esc]메뉴 [0]개요 [2]Sentry [3]에이전트 [t]트래픽 급증 [space]정지 [q]종료"
         cats = ("all", "traffic")
     else:
         list_h = 6 if h >= 30 else 4
@@ -2206,7 +2363,7 @@ def compose(world, w, h, paused=False):
         lines += world.draw("sentry").lines()
         world.hits += [(x0 + 1, x1 + 1, off + r0 + 1, off + r1 + 1, act) for x0, x1, r0, r1, act in world.scene_hits]
         lines += issue_lines(world, w, list_h)
-        keys = "[Esc]메뉴 [0]개요 [1]트래픽 [b]쥐 떼 [n]쥐 1마리 [h]사람이 처리 [r]/쥐 클릭 잡은 쥐 기록 [q]종료"
+        keys = "[Esc]메뉴 [0]개요 [1]트래픽 [3]에이전트 [b]쥐 떼 [n]쥐 1마리 [h]사람이 처리 [r]/쥐 클릭 잡은 쥐 기록 [q]종료"
         cats = ("all", "sentry")
     lines += log_lines(world, w, log_h, cats, keys)
     if world.show_hist:  # 잡은 쥐 기록 창: 머리줄 아래를 덮는다
@@ -2301,8 +2458,8 @@ def handle_key(world, ch, state):
         world.set_view("menu")
     elif ch == "0":
         world.set_view("overview")
-    elif ch in ("1", "2"):
-        world.set_view("traffic" if ch == "1" else "sentry")
+    elif ch in ("1", "2", "3"):
+        world.set_view({"1": "traffic", "2": "sentry", "3": "agents"}[ch])
     elif ch == "\t":
         order = [v for v, _ in VIEWS]
         world.set_view(order[(order.index(world.view) + 1) % len(order)])
@@ -2452,9 +2609,10 @@ def attach_fixer(world):
     if world.ai is None or not hasattr(world.ai, "ask"):
         world.log("🔧 실제 수정(PR)은 OpenAI API 가 켜져 있어야 한다 - 이번엔 MR 연출로 진행", 245, "all")
         return False
-    world.fixer = fixer.Fixer(ask=world.ai.ask, runtime_dir=RUNTIME_DIR)
-    world.log("🔧 실제 수정 모드 - fixable 이슈는 %s 레포에 패치 PR 을 연다 (최대 %d개, 머지는 사람이)" % (
-        world.fixer.name, world.fixer.max_prs), 141, "all")
+    review = fixer.codex_review if fixer.review_enabled() else None
+    world.fixer = fixer.Fixer(ask=world.ai.ask, runtime_dir=RUNTIME_DIR, review=review)
+    world.log("🔧 실제 수정 모드 - fixable 이슈는 %s 레포에 패치 PR 을 연다 (최대 %d개, %s, 머지는 사람이)" % (
+        world.fixer.name, world.fixer.max_prs, "PR 전에 Codex 리뷰" if review else "Codex 리뷰 없음"), 141, "all")
     return True
 
 
@@ -2675,7 +2833,7 @@ def main():
     ap.add_argument("--snapshot", type=float, metavar="SEC", help="SEC초 시뮬레이션 뒤 한 프레임만 출력하고 종료")
     ap.add_argument("--size", default="100x30", help="--snapshot 화면 크기 (기본 100x30)")
     ap.add_argument("--plain", action="store_true", help="--snapshot 출력에서 색 제거")
-    ap.add_argument("--view", default="overview", choices=["intro", "menu", "overview", "traffic", "sentry"],
+    ap.add_argument("--view", default="overview", choices=["intro", "menu"] + list(VIEW_NAMES),
                     help="--snapshot 화면")
     ap.add_argument("--service", default="ALL", help="--snapshot 스테이지 서비스 (%s)" % ", ".join(s[0] for s in SERVICES))
     ap.add_argument("--skip-intro", action="store_true", help="타이틀 없이 메뉴부터")

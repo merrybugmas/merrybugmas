@@ -16,13 +16,15 @@ read -r -d '' PROMPT <<'P'
    - 오래 배회(roam) 중인 쥐가 있는데 노는 병정(home)이 있으면 → `./market tell <병정> <ID> 먼저 잡아`
    - 제목이 광고·확장·서드파티면 → `./market tell <병정> <ID> noise로 처리`
    - 5xx·보안처럼 사람이 봐야 하면 → `./market tell <병정> <ID> 사람에게`
-   - rps 가 peak_rps 의 70% 이상이면 → 트래픽 경고를 say 로 띄운다
+   - rps 가 peak_rps 의 70% 이상이면 → `./market tell 엘프 보고` 로 엘프(트래픽 대응 에이전트)에게 상황을 묻는다
+   - traffic.elf.pending_approval 이 있으면 → 번호표는 사람이 승인한다. 승인하지 말고 say 로 "번호표 승인 필요 - 사람 확인" 을 띄운다
+   - traffic.elf.state 가 flag 면 → 레버로 안 풀리는 문제다. say 로 담당자 확인이 필요하다고 띄운다
    - 급한 게 없으면 아무 명령도 내리지 않는다
 3. 명령은 최대 2개만 실행한다. 마지막으로 `./market say "🤖 운영자 판단: <근거 한 줄, 40자 이내>"` 를 실행한다.
 4. 코드나 파일은 고치지 않는다. ./market 외의 명령은 쓰지 않는다. 답은 한 줄로 끝낸다.
 P
 
-RUN="$HERE/.runtime"; mkdir -p "$RUN"
+RUN="${XMAS_MARKET_RUNTIME:-$HERE/.runtime}"; mkdir -p "$RUN"
 OUT="$RUN/autopilot.last"; LOG="$RUN/autopilot.log"
 n=0
 while :; do

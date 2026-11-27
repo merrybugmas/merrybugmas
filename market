@@ -10,8 +10,8 @@ case "${1:-help}" in
   help|-h|--help)
     cat <<'H'
 ./market status                 현황 JSON (단계·서비스·트래픽·쥐·병정·통계·최근 로그·현재 화면)
-./market start <서비스> [traffic|sentry|overview]   스테이지 시작 (서비스: ALL WEB SEARCH RESUME DISPLAY MOBILE)
-./market view menu|overview|traffic|sentry   화면 전환 (메뉴 / 개요 / 대기열 / 전투)
+./market start <서비스> [traffic|sentry|overview|agents]   스테이지 시작 (서비스: ALL WEB SEARCH RESUME DISPLAY MOBILE)
+./market view menu|overview|traffic|sentry|agents   화면 전환 (메뉴 / 개요 / 대기열 / 전투 / 에이전트)
 ./market spike                  트래픽 급증
 ./market outbreak [N]           쥐 떼 N마리 (기본 5)
 ./market mouse                  쥐 1마리

@@ -61,7 +61,7 @@ d.text((40, 76), "운영자(Codex)가 채팅으로 병정·엘프(OpenAI API)를
 user = box(40, 250, 190, 150, DIM, "사람", ["자연어로 묻고", "지시·승인한다"])
 codex = box(330, 170, 330, 310, GREEN, "Codex  운영자", [
     "· AGENTS.md = 도구 사용 규약", "· status 를 먼저 읽고", "  숫자로 답한다", "· 병정·엘프에게 tell / focus",
-    "· brief · say 로 대시보드 표시", "· auto: 30초마다 자율 판단"], tag="OpenAI Codex CLI")
+    "· auto: 30초마다 자율 판단", "· 수정 PR 리뷰어 (읽기 전용)"], tag="OpenAI Codex CLI")
 bridge = box(760, 200, 260, 250, GOLD, "./market", [
     "명령 → .runtime/cmd", "현황 ← .runtime/state.json", "(1초마다 갱신)", "", "사람도 같은 명령 사용"],
     tag="파일 브리지")
@@ -76,7 +76,7 @@ oai = box(1120, 530, 440, 270, PURPLE, "OpenAI API  에이전트의 두뇌", [
 d.text((40, 538), "--live 실연동 (.env 에 설정된 것만, 없으면 mock)", font=f(20, True), fill=GOLD)
 box(40, 590, 310, 210, BLUE, "Sentry API", ["미해결 이슈 → 쥐", "읽기 전용", "(15초마다)"], tag="읽기")
 box(380, 590, 310, 210, BLUE, "서버 /metrics", ["rps · 5xx · 응답 시간", "Web Vitals", "+ /admin/levers 레버"], tag="읽기 + 레버")
-box(720, 590, 300, 210, BLUE, "GitHub PR", ["fixable → 새 브랜치", "→ gh pr create", "머지는 사람이"], tag="쓰기")
+box(720, 590, 300, 210, BLUE, "GitHub PR", ["OpenAI 패치", "→ Codex 리뷰 → PR", "머지는 사람이"], tag="쓰기")
 
 arrow(230, 325, 330, 325, label="채팅", both=True)
 arrow(660, 280, 760, 280, label="tell · brief", dy=-32)

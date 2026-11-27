@@ -50,9 +50,9 @@
 - `./market focus <ISSUE-ID>` — 그 이슈부터 처치
 - `./market human` — 사람이 우리 속 쥐를 처리했다고 알림
 - `./market spike` · `./market outbreak 3` · `./market mouse` — 시연용 이벤트
-- `./market start <서비스> [traffic|sentry|overview]` — 그 서비스로 스테이지 시작. 서비스: `ALL WEB SEARCH RESUME DISPLAY MOBILE`.
+- `./market start <서비스> [traffic|sentry|overview|agents]` — 그 서비스로 스테이지 시작. 서비스: `ALL WEB SEARCH RESUME DISPLAY MOBILE`.
   "검색 쪽 버그 보여줘" → `./market start SEARCH sentry`. 서비스를 바꾸면 새 판(쥐·통계 초기화)이다
-- `./market view traffic` · `./market view sentry` · `./market view overview` · `./market view menu` — 화면 전환. "트래픽 보여줘", "쥐 잡는 거 보여줘", "개요로", "메뉴로" 같은 말에 쓴다
+- `./market view traffic` · `./market view sentry` · `./market view overview` · `./market view agents` · `./market view menu` — 화면 전환. "트래픽 보여줘", "쥐 잡는 거 보여줘", "개요로", "에이전트 보여줘"(병정 셋·엘프 카드), "메뉴로" 같은 말에 쓴다
 - `./market brief` — AI 운영 브리핑(현황 3줄 + 권고)을 대시보드에 띄운다. "지금 상황 요약해 줘" 에 쓴다. AI 가 꺼져 있으면 숫자 한 줄
 - `./market say <짧은 메시지>` — 대시보드 로그에 말풍선처럼 표시 (답변 요약을 한 줄로 띄울 때)
 - `./market auto off` · `./market pause` / `resume`

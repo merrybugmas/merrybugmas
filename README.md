@@ -175,7 +175,7 @@ python3 -m unittest discover -s tests -v                             # 스모크
 ```
 
 ## 테스트
-`tests/test_smoke.py` 35개 + `tests/test_elf.py` 17개 (표준 라이브러리 unittest, 52개, 약 7초):
+`tests/test_smoke.py` 40개 + `tests/test_elf.py` 17개 (표준 라이브러리 unittest, 57개, 약 17초):
 - 6개 서비스 × 3개 화면(18개 조합) + 타이틀·메뉴·기록 창이 오류 없이 그려지는지
 - 키워드 병정 명령 (지목·복귀·보고)
 - AI 병정을 가짜 OpenAI 응답으로: 묘사로 가리킨 쥐 해석, 트리아지가 mock 판정을 바꾸고 MR 로그에 수정 요약이 붙는지, 브리핑, 요청이 strict JSON Schema 인지, **API 실패 시 키워드로 폴백**하는지
@@ -184,6 +184,7 @@ python3 -m unittest discover -s tests -v                             # 스모크
 - Sentry 실연동을 가짜 Sentry 응답으로: 실제 이슈가 중복 없이 쥐가 되는지, 가짜 쥐가 섞이지 않는지, AI 가 실제 제목을 판정하는지, **읽기 실패 시 mock 으로 폴백**하는지
 - 엘프(`tests/test_elf.py`): mock 급증에 캐시 → 계산대 순으로 대응하고 해소·원복하는지, 번호표는 승인 전에 안 켜는지, AI 가 고른 레버를 쓰고 예산을 넘으면 규칙으로 가는지, 실서버 레버를 POST 로 바꾸는지, API 장애면 담당자를 부르는지, 레버 없는 서버에서 켠 척하지 않는지
 - 트래픽 실연동을 가짜 `/metrics` 와 가짜 시계로: 카운터 증가분으로 rps 를 내는지, 서버 재시작·읽기 끊김 처리, 가짜 급증을 섞지 않는지, 5xx 비율·응답 시간·Web Vitals 를 읽고 없는 항목은 비워 두는지
+- Codex PR 리뷰를 가짜 Codex 로: 승인이면 PR 에 리뷰 근거, 반려면 PR 없이 사람에게, Codex 실패면 '리뷰 못 함'으로 PR, 명령이 읽기 전용·스키마 지정인지
 - 실제 수정을 가짜 OpenAI 패치와 가짜 git/gh 로: 실연동 이슈는 PR 이 되고 같은 이슈로 두 번 열지 않는지, 패치가 안 맞거나 스택이 없으면 사람에게 넘기는지(MR 을 지어내지 않는지), mock 이슈는 연출 MR 그대로인지
 - 병정 질의응답: 질문이 answer 로 해석되고 처리 기록이 함께 넘어가는지
 
@@ -229,7 +230,8 @@ python3 xmas_market.py --live --no-ai    # OpenAI 호출 없이 키워드 판정
 
 ```
 fixable 판정 → OpenAI 가 레포 소스(XMAS_FIX_FILES, 기본 app.js·server.py)를 읽고 최소 패치(찾아 바꾸기)를 만든다
-→ 패치가 정확히 한 곳에 맞는지 · 고친 파일이 문법상 맞는지(node --check / py_compile) 확인
+→ 패치가 정확히 한 곳에 맞는지 확인 → Codex(codex exec, 읽기 전용)가 diff 를 리뷰: 반려면 PR 없이 사람에게
+→ 고친 파일이 문법상 맞는지(node --check / py_compile) 확인
 → 별도 git worktree 의 새 브랜치 sentry-bot/<이슈>-<시각> 에 커밋 → push → gh pr create
 → 작전 로그 "🔀 PR #n 생성 … URL", 기록 창 "✔ PR#n", ./market prs, ./market status 의 prs · history[].url
 ```
@@ -238,7 +240,7 @@ fixable 판정 → OpenAI 가 레포 소스(XMAS_FIX_FILES, 기본 app.js·serve
 - 같은 이슈는 PR 을 한 번만 연다 (`.runtime/prs.json`). 한 번 실행에 최대 `XMAS_FIX_MAX`(기본 5)개
 - 고칠 위치를 모르는 이슈(스택이 없는 이벤트)나 패치가 맞지 않으면 MR 을 지어내지 않고 **사람에게 넘긴다** (우리에 가둠)
 - mock 이슈는 지금처럼 `MR !14xx` 연출이다. 실제 PR 은 실연동 이슈에만 열린다
-- 필요: `git`, `gh`(로그인), 대상 레포 push 권한, 실제 OpenAI API (`--replay`·`--no-ai` 에서는 꺼진다)
+- 필요: `git`, `gh`(로그인), 대상 레포 push 권한, 실제 OpenAI API (`--replay`·`--no-ai` 에서는 꺼진다). Codex 리뷰는 `codex` CLI(로그인)가 있으면 켜진다 (`XMAS_FIX_REVIEW=off` 로 끔). Codex 가 실패하면 PR 본문에 '리뷰 못 함'으로 적고 연다
 
 **확인 (2026-11-27)**: 데모 웹앱의 실제 Sentry 이슈 7건으로 돌려 49초 만에 PR 3개가 열렸다 —
 [#1](https://github.com/merrybugmas/demo-web/pull/1) 장바구니 쿠폰 null 방어,
@@ -247,6 +249,8 @@ fixable 판정 → OpenAI 가 레포 소스(XMAS_FIX_FILES, 기본 app.js·serve
 나머지는 백엔드 5xx 2건·HTML 을 JSON 으로 읽는 에러 1건을 사람에게, 광고 스크립트 1건을 noise 로 보냈다. OpenAI 호출 10회, 실패 0.
 #1~#3 은 다음 시연을 위해 닫았다(머지 안 함). 이후 실행에서는 앞서 사람에게 넘겼던 HTML→JSON 파싱 에러(WEB-J)를 fixable 로 판정해
 [#4](https://github.com/merrybugmas/demo-web/pull/4) (`/api/notice` 응답이 HTML 일 때 JSON.parse 방어)를 열었다. 같은 이슈도 실행마다 판정이 달라질 수 있어, PR 은 열기만 하고 머지는 사람이 한다.
+
+**Codex 리뷰 추가 후 (2026-11-27)**: 같은 7건으로 다시 돌려 fixable 3건을 Codex 가 모두 승인해 [#5](https://github.com/merrybugmas/demo-web/pull/5) · [#6](https://github.com/merrybugmas/demo-web/pull/6) · [#7](https://github.com/merrybugmas/demo-web/pull/7) 이 열렸다. PR 본문에 리뷰 근거가 붙는다 (예: "쿠폰이 null 이면 할인율을 0으로 처리해 오류를 막고, 정상 숫자 할인율의 계산은 유지한다"). 리뷰는 건당 약 50초, OpenAI 호출 10회.
 
 ### 병정에게 묻기
 AI 가 켜져 있으면 병정이 질문에도 답한다. 명령 해석에 최근 처리 기록 15건과 누적 통계를 같이 넘긴다.
@@ -259,7 +263,7 @@ AI 가 켜져 있으면 병정이 질문에도 답한다. 명령 해석에 최�
 ## 더 연동할 때
 - 트래픽: 지금은 서버 한 대의 `/metrics` 를 직접 읽는다. 여러 서버를 합치려면 Grafana(또는 Prometheus) 쿼리 결과를 읽게 바꾼다 (아직 안 했다)
 - 트리아지 입력을 이슈 제목에서 스택트레이스·관련 소스까지 넓힌다
-- 병정의 review 는 아직 연출이다(실제 PR 은 사람이 리뷰한다). 병정 하나를 sentry-bot(Codex) 런 하나에 붙이면 더 큰 수정도 맡길 수 있다
+- 실연동 PR 의 review 는 Codex 가 하고, mock 이슈의 review 는 연출이다. 병정 하나를 sentry-bot(Codex) 수정 런 하나에 붙이면 여러 파일에 걸친 큰 수정도 맡길 수 있다
 
 ## 라이선스
 MIT — [LICENSE](LICENSE)

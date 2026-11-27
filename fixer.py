@@ -2,7 +2,8 @@
 """병정의 실제 수정 — 실연동(--live) 이슈를 고치는 코드 패치를 만들어 GitHub PR 을 연다.
 
   병정이 fixable 판정을 내린 실제 Sentry 이슈 → OpenAI 가 대상 레포 소스를 읽고 최소 패치(찾아 바꾸기)를 만든다
-  → 패치가 정확히 한 곳에 맞는지, 고친 파일이 문법상 맞는지 확인 → 별도 git worktree 의 새 브랜치에 커밋
+  → 패치가 정확히 한 곳에 맞는지 확인 → Codex(codex exec, 읽기 전용)가 변경을 리뷰해 승인·반려
+  → 반려면 PR 없이 사람에게 넘긴다 → 승인이면 고친 파일 문법 확인 → 별도 git worktree 의 새 브랜치에 커밋
   → push → gh pr create. 결과 PR 주소는 잡은 쥐 기록·작전 로그·./market status 에 남는다.
 
 사람이 리뷰하고 머지한다. 이 모듈은 머지하지 않고, 기본 브랜치에 직접 푸시하지 않는다.
@@ -13,7 +14,10 @@
   XMAS_FIX_FILES   패치 대상으로 보여 줄 파일들, 쉼표 구분 (기본 app.js,server.py)
   XMAS_FIX_BASE    PR 의 기준 브랜치 (기본 main)
   XMAS_FIX_MAX     한 번 실행에서 열 PR 최대 수 (기본 5)
+  XMAS_FIX_REVIEW  codex(기본: codex CLI 가 있으면 PR 전에 Codex 리뷰) / off
+  XMAS_FIX_REVIEW_TIMEOUT  Codex 리뷰를 기다리는 최대 초 (기본 100). 넘거나 실패하면 PR 본문에 '리뷰 못 함'으로 적고 연다
 """
+import difflib
 import json
 import os
 import re
@@ -45,7 +49,64 @@ FIX_PROMPT = """너는 sentry-bot 의 수정 담당 병정이다. Sentry 이슈 
 백엔드가 5xx 를 주는 것처럼 프론트 코드로 못 고치는 문제는 만들지 말고 find 를 "" 로 둔다.
 """
 
+REVIEW_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["verdict", "reason"],
+    "properties": {
+        "verdict": {"type": "string", "enum": ["approve", "reject"]},
+        "reason": {"type": "string"},
+    },
+}
+
+REVIEW_PROMPT = """너는 sentry-bot 이 만든 자동 수정 PR 을 올리기 전에 검토하는 리뷰어다. 파일은 읽기만 하고 고치지 않는다.
+아래 Sentry 이슈와 변경(diff)을 보고, 필요하면 레포의 %s 를 열어 주변 코드를 확인한다.
+- approve: 이 변경이 그 에러의 원인을 막고, 관계없는 동작을 바꾸지 않으며, 새 버그를 만들지 않는다
+- reject: 에러를 못 막거나(증상만 숨김 포함), 다른 동작을 깨거나, 이슈와 관계없는 수정이다
+reason 은 한국어 한 문장(80자 이내)으로 판단 근거를 쓴다.
+
+Sentry 이슈 %s: %s
+위치: %s
+
+--- diff ---
+%s
+"""
+
 _lock = threading.Lock()
+
+
+class ReviewRejected(Exception):
+    """Codex 리뷰가 변경을 반려했다 — PR 을 열지 않고 사람에게 넘긴다."""
+
+
+def review_enabled():
+    mode = os.environ.get("XMAS_FIX_REVIEW", "codex").strip().lower()
+    return mode not in ("off", "0", "no", "false") and shutil.which("codex") is not None
+
+
+def codex_review(issue, f, diff, repo, run=None, timeout=None):
+    """codex exec(읽기 전용 샌드박스)로 diff 를 리뷰한다. {"verdict": approve|reject, "reason": ...} 를 돌려준다.
+    run 은 테스트에서 subprocess.run 대신 끼우는 함수다."""
+    run = run or subprocess.run
+    timeout = timeout or float(os.environ.get("XMAS_FIX_REVIEW_TIMEOUT", "").strip() or 100)
+    tmp = tempfile.mkdtemp(prefix="xmas-review-")
+    try:
+        schema, out = os.path.join(tmp, "schema.json"), os.path.join(tmp, "out.json")
+        with open(schema, "w", encoding="utf-8") as fh:
+            json.dump(REVIEW_SCHEMA, fh)
+        prompt = REVIEW_PROMPT % (f, issue["id"], issue["title"], issue.get("culprit") or "-", diff)
+        r = run(["codex", "exec", "--skip-git-repo-check", "--ephemeral", "-s", "read-only", "-C", repo,
+                 "--output-schema", schema, "-o", out, prompt],
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout)
+        if r.returncode != 0:
+            raise RuntimeError("codex exec 실패: %s" % (r.stderr or r.stdout or "").strip()[-120:])
+        with open(out, encoding="utf-8") as fh:
+            obj = json.loads(fh.read().strip())
+        if obj.get("verdict") not in ("approve", "reject"):
+            raise ValueError("리뷰 응답 형식이 다름")
+        return {"verdict": obj["verdict"], "reason": str(obj.get("reason", ""))[:200], "by": "Codex"}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def configured():
@@ -87,7 +148,7 @@ class Fixer:
     git·gh 를 부르는 publish 도 바꿔 끼울 수 있다.
     """
 
-    def __init__(self, ask, repo=None, files=None, base=None, max_prs=None, runtime_dir=None, publish=None):
+    def __init__(self, ask, repo=None, files=None, base=None, max_prs=None, runtime_dir=None, publish=None, review=None):
         env = os.environ.get
         self.ask = ask
         self.repo = repo or env("XMAS_FIX_REPO", "").strip()
@@ -96,6 +157,7 @@ class Fixer:
         self.max_prs = max_prs if max_prs is not None else int(env("XMAS_FIX_MAX", "").strip() or 5)
         self.runtime_dir = runtime_dir
         self.publish = publish or self._publish
+        self.review = review  # (issue, file, diff, repo) -> {"verdict", "reason"}. None 이면 리뷰 없이 PR
         self.results, self.opened, self.busy = [], 0, set()
         self.db_path = os.path.join(runtime_dir, "prs.json") if runtime_dir else None
         self.db = self._load()
@@ -176,11 +238,30 @@ class Fixer:
         title = (p.get("title") or "fix: %s" % issue["title"])[:72]
         if not title.startswith("fix"):
             title = "fix: " + title
+        rv = None
+        if self.review is not None:
+            diff = "".join(difflib.unified_diff(src[f].splitlines(True), new.splitlines(True), "a/" + f, "b/" + f))
+            try:
+                rv = self.review(issue, f, diff, self.repo)
+            except Exception as e:  # noqa: BLE001 — 리뷰 도구가 실패해도 수정은 사람 리뷰로 넘어간다
+                rv = {"verdict": "error", "reason": str(e)[:120], "by": "Codex"}
+            if rv["verdict"] == "reject":
+                raise ReviewRejected(rv["reason"])
+        if rv is None:
+            review_line = ""
+        elif rv["verdict"] == "approve":
+            review_line = "🔍 **Codex 리뷰: 승인** — %s\n\n" % rv["reason"]
+        else:
+            review_line = "🔍 Codex 리뷰를 못 함 (%s) — 사람 리뷰가 필요하다\n\n" % rv["reason"]
         body = ("Sentry 이슈 **%s** — `%s`\n\n%s\n\n" % (issue["id"], issue["title"], (p.get("explanation") or "").strip())
+                + review_line
                 + ("Sentry: %s\n\n" % issue["url"] if issue.get("url") else "")
-                + "---\n이 PR 은 MERRY BUGMAS 대시보드의 병정(sentry-bot)이 OpenAI API 로 만든 자동 수정이다. "
-                  "사람이 리뷰한 뒤 머지한다.\n")
-        return self.publish(issue, f, new, title, body)
+                + "---\n이 PR 은 MERRY BUGMAS 대시보드의 병정(sentry-bot)이 OpenAI API 로 만들고"
+                + (" Codex 가 리뷰한" if rv else "") + " 자동 수정이다. 사람이 리뷰한 뒤 머지한다.\n")
+        res = self.publish(issue, f, new, title, body)
+        if rv is not None:
+            res = dict(res, review=rv)
+        return res
 
     def _publish(self, issue, f, new, title, body):
         """새 브랜치를 별도 worktree 에 만들어 커밋·push 하고 PR 을 연다. 사용 중인 체크아웃은 건드리지 않는다."""

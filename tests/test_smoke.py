@@ -66,14 +66,14 @@ class RenderTest(unittest.TestCase):
     def test_every_service_and_view_renders(self):
         n = 0
         for svc in xm.SERVICES:
-            for view in ("overview", "traffic", "sentry"):
+            for view in xm.VIEW_NAMES:
                 with self.subTest(service=svc[0], view=view):
                     w = new_world(svc[0], view)
                     step(w, 50)
                     frame = xm.compose(w, 100, 30)
                     self.assertEqual(len(frame), 30)
                     n += 1
-        self.assertEqual(n, len(xm.SERVICES) * 3)
+        self.assertEqual(n, len(xm.SERVICES) * len(xm.VIEW_NAMES))
 
     def test_menu_intro_and_history_render(self):
         w = xm.World()
@@ -84,6 +84,32 @@ class RenderTest(unittest.TestCase):
         step(w, 60)
         w.open_history()
         self.assertEqual(len(xm.compose(w, 100, 30)), 30)
+
+    def test_agents_view(self):
+        w = new_world("WEB", "agents")
+        step(w, 60)
+        w.command("tell 진저 보고")
+        for size in ((100, 30), (120, 40), (80, 24), (60, 22)):
+            frame = xm.compose(w, *size)
+            self.assertEqual(len(frame), size[1])
+            self.assertTrue(all(len(xm.ANSI.sub("", l)) <= size[0] * 2 for l in frame))
+        text = xm.ANSI.sub("", "".join(xm.compose(w, 100, 30)))
+        for name in xm.SOLDIER_NAMES + ["엘프"]:
+            self.assertIn(name, text)
+        for size, (x, y), want in (((100, 30), (10, 12), "sentry"), ((100, 30), (80, 23), "traffic"),
+                                   ((90, 22), (10, 5), "sentry"), ((90, 22), (10, 16), "traffic")):
+            w.set_view("agents")
+            xm.compose(w, *size)
+            hit = [a for x0, x1, y0, y1, a in w.hits if y0 > 1 and x0 <= x <= x1 and y0 <= y <= y1]
+            self.assertTrue(hit, (size, x, y))
+            hit[0]()
+            self.assertEqual(w.view, want)
+        w.command("view 1")
+        w.command("view 3")
+        self.assertEqual(w.view, "agents")
+        xm.handle_key(w, "0", {"paused": False})
+        xm.handle_key(w, "3", {"paused": False})
+        self.assertEqual(w.view, "agents")
 
     def test_small_terminal_message(self):
         w = new_world()
@@ -520,6 +546,65 @@ class RealFixTest(unittest.TestCase):
         rec = [r for r in w.history if r["id"] == "WEB-D"][0]
         self.assertEqual((rec["outcome"], rec["pr"], rec["mr"]), ("human", None, None))
         self.assertEqual(self.published, [])
+
+    GOOD = {"file": "app.js", "find": "return data.items.map((g) => g.name); // 버그",
+            "replace": "return (data.items || []).map((g) => g.name);", "title": "fix: items 없을 때 방어", "explanation": "e"}
+
+    def run_review(self, verdict):
+        """가짜 Codex 리뷰를 단 Fixer 로 이슈 하나를 처리하고 (world, 리뷰에 넘어온 diff 목록) 을 돌려준다."""
+        seen = []
+
+        def review(issue, f, diff, repo):
+            seen.append(diff)
+            if verdict == "boom":
+                raise RuntimeError("codex 없음")
+            return {"verdict": verdict, "reason": "원인을 막는 최소 수정" if verdict == "approve" else "증상만 숨김", "by": "Codex"}
+        fx = self.fixer.Fixer(ask=lambda *a: self.GOOD, repo=self.dir, files=["app.js"], publish=self.publish, review=review)
+        xm.R.seed(7)
+        w = xm.World()
+        w.auto = False
+        w.fixer = fx
+        w.start_stage(w.find_service("WEB"), "sentry")
+        xm.compose(w, 100, 30)
+        w.spawn_mouse({"id": "WEB-C", "title": "TypeError: map", "kind": "fixable", "review_block": False, "live": True,
+                       "culprit": "run(app)"})
+        self.assertTrue(wait_ai(w, lambda: any(r["id"] == "WEB-C" for r in w.history), timeout=8))
+        return w, seen
+
+    def test_codex_review_approve_opens_pr_with_review(self):
+        w, seen = self.run_review("approve")
+        self.assertIn("+  return (data.items || [])", seen[0])  # 리뷰어는 실제 diff 를 본다
+        self.assertEqual([r["outcome"] for r in w.history if r["id"] == "WEB-C"], ["fixed"])
+        self.assertEqual(len(self.published), 1)
+        self.assertTrue(any("Codex 리뷰 승인" in t for _, t, _, _ in w.logs))
+
+    def test_codex_review_reject_goes_to_human_without_pr(self):
+        w, _ = self.run_review("reject")
+        rec = [r for r in w.history if r["id"] == "WEB-C"][0]
+        self.assertEqual((rec["outcome"], rec["pr"]), ("human", None))
+        self.assertEqual(self.published, [])  # 반려된 수정은 PR 을 열지 않는다
+        self.assertTrue(any("Codex 리뷰 반려" in t for _, t, _, _ in w.logs))
+
+    def test_codex_review_failure_still_opens_pr_marked_unreviewed(self):
+        w, _ = self.run_review("boom")
+        self.assertEqual(len(self.published), 1)
+        self.assertTrue(any("Codex 리뷰 못 함" in t for _, t, _, _ in w.logs))
+
+    def test_codex_review_command_is_read_only_with_schema(self):
+        calls = []
+
+        def run(argv, **kw):
+            calls.append(argv)
+            out = argv[argv.index("-o") + 1]
+            with open(out, "w") as fh:
+                fh.write('{"verdict": "reject", "reason": "증상만 숨김"}')
+            return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+        rv = self.fixer.codex_review({"id": "WEB-C", "title": "t"}, "app.js", "diff", self.dir, run=run)
+        self.assertEqual((rv["verdict"], rv["reason"]), ("reject", "증상만 숨김"))
+        argv = calls[0]
+        self.assertEqual(argv[:2], ["codex", "exec"])
+        self.assertEqual(argv[argv.index("-s") + 1], "read-only")
+        self.assertIn("--output-schema", argv)
 
     def test_mock_issue_keeps_simulated_mr(self):
         xm.R.seed(7)

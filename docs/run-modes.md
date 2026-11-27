@@ -27,6 +27,8 @@
 - 쥐 판정: mock 이면 쥐가 나올 때마다(몇 분이면 수십 회), live 면 실제 미해결 이슈 수만큼
 - 병정에게 말 걸기 1회당 1회, `./market brief` 1회
 - 엘프: 실행당 최대 5회. **엘프 채팅 명령은 0회**
+- 실제 수정 PR: fixable 실연동 이슈 1건당 패치 1회 (실행당 `XMAS_FIX_MAX`). 그 PR 의 Codex 리뷰는 OpenAI API 가 아니라 Codex 사용량
+- Codex 운영자(`tools/codex-autopilot.sh`): Codex 사용량만. 다만 AI 가 켜진 대시보드에 `tell` 을 보내면 그 명령 해석에 OpenAI 1회씩
 - mock 은 기본이 0회다. `--live` 로 띄우면서 크레딧을 아끼려면 `--no-ai`
 
 ## 3. Claude Code 옆 패널
@@ -52,6 +54,7 @@
 | `TRAFFIC_METRICS_URL` (+ `TRAFFIC_METRIC` · `TRAFFIC_PEAK`(100) · `TRAFFIC_POLL`(1)) | 트래픽 실연동 |
 | `TRAFFIC_ADMIN_URL` | 엘프 레버 주소 (없으면 `TRAFFIC_METRICS_URL` 의 경로를 `/admin/levers` 로) |
 | `XMAS_FIX_REPO` · `XMAS_FIX_MAX` | 병정의 실제 수정 PR (`--live` + OpenAI 필요) |
+| `XMAS_FIX_REVIEW`(codex) · `XMAS_FIX_REVIEW_TIMEOUT`(100) | PR 전에 Codex 리뷰 (`codex` CLI 로그인 필요, `off` 로 끔). API 크레딧이 아니라 Codex 사용량을 쓴다 |
 | `DEMO_CAPACITY` (demo-web) | 데모 서버 동시 처리 슬롯 기본값 (2) |
 
 ## 5. 실연동 데모 한 벌
