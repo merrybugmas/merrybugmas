@@ -6,6 +6,12 @@
 Grafana 를 거치지 않고 서버의 /metrics 를 직접 읽는다 (Prometheus 가 긁어 가는 것과 같은 방식).
 카운터(누적 요청 수)의 증가분 ÷ 지난 시간 = rps. 표준 라이브러리만 쓴다.
 
+같은 /metrics 에 아래 지표가 있으면 함께 읽는다 (없으면 그 항목만 비워 둔다)
+  http_requests_total{status="5xx"}                      → 5xx 비율 (최근 10초)
+  http_request_duration_seconds_sum / _count             → 평균 응답 시간 (최근 10초)
+  web_vitals_lcp_seconds · web_vitals_cls · web_vitals_inp_seconds · web_vitals_ttfb_seconds
+                                                         → 브라우저가 보고한 Web Vitals (서버가 낸 p75)
+
 환경변수 (레포의 .env 에 적어도 된다)
   TRAFFIC_METRICS_URL  필수. 예: http://localhost:8765/metrics  (demo-web 서버)
   TRAFFIC_METRIC       카운터 이름 (기본 http_requests_total, 라벨이 여러 개면 모두 더한다)
@@ -24,20 +30,40 @@ def configured():
     return bool(os.environ.get("TRAFFIC_METRICS_URL", "").strip())
 
 
-def parse_counter(text, metric):
-    """Prometheus 텍스트에서 metric 의 값을 모두 더한다. 없으면 ValueError."""
-    total, found = 0.0, False
+WINDOW_SEC = 10.0  # 5xx 비율·응답 시간을 내는 구간
+VITALS = (("lcp_s", "web_vitals_lcp_seconds"), ("cls", "web_vitals_cls"),
+          ("inp_s", "web_vitals_inp_seconds"), ("ttfb_s", "web_vitals_ttfb_seconds"))
+
+
+def parse_samples(text):
+    """Prometheus 텍스트 → [(이름, 라벨 문자열, 값)]. 값이 숫자가 아닌 줄(NaN 포함)은 건너뛴다."""
+    out = []
     for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
         name = line.split("{", 1)[0].split(None, 1)[0]
-        if name != metric:
+        labels = line[line.index("{") + 1:line.index("}")] if "{" in line and "}" in line else ""
+        rest = line[line.index("}") + 1:] if "{" in line and "}" in line else line[len(name):]
+        try:
+            v = float(rest.split()[0])
+        except (ValueError, IndexError):
             continue
-        rest = line[line.index("}") + 1:] if "{" in line else line[len(name):]
-        total += float(rest.split()[0])
-        found = True
-    if not found:
+        if v == v:  # NaN 제외
+            out.append((name, labels, v))
+    return out
+
+
+def total_of(samples, metric, label_has=None):
+    """metric 의 값을 모두 더한다 (label_has 가 있으면 그 글자가 든 라벨만). 하나도 없으면 None."""
+    vals = [v for n, labels, v in samples if n == metric and (label_has is None or label_has in labels)]
+    return sum(vals) if vals else None
+
+
+def parse_counter(text, metric):
+    """Prometheus 텍스트에서 metric 의 값을 모두 더한다. 없으면 ValueError."""
+    total = total_of(parse_samples(text), metric)
+    if total is None:
         raise ValueError("%s 카운터가 없음" % metric)
     return total
 
@@ -54,6 +80,8 @@ class TrafficFeed:
         self.transport, self.clock, self.timeout = transport or self._get, clock, timeout
         self.prev = None  # (시각, 누적 요청 수)
         self.value, self.ok_at = 0.0, None
+        self.window = []  # 최근 WINDOW_SEC 의 (시각, 요청 수, 5xx 수, 응답 시간 합, 응답 시간 건수)
+        self.extra = {}  # error_pct · latency_ms · lcp_s · cls · inp_s · ttfb_s · vitals_reports (없는 것은 None)
         self.calls = self.fails = 0
         self.last_error = None
         self.down = False  # 연속 실패 중인지 (메인 루프가 로그를 한 번만 남기도록)
@@ -63,7 +91,10 @@ class TrafficFeed:
         """한 번 읽어 rps 를 갱신한다. 실패하면 예외."""
         self.calls += 1
         try:
-            total = parse_counter(self.transport(self.url), self.metric)
+            samples = parse_samples(self.transport(self.url))
+            total = total_of(samples, self.metric)
+            if total is None:
+                raise ValueError("%s 카운터가 없음" % self.metric)
         except Exception as e:  # noqa: BLE001
             self.fails += 1
             self.last_error = "%s: %s" % (type(e).__name__, str(e)[:60])
@@ -75,7 +106,34 @@ class TrafficFeed:
             self.ok_at = now
         # total < prev 면 서버가 다시 떠서 카운터가 0 부터 시작한 것: 이번 구간은 건너뛴다
         self.prev = (now, total)
+        self.read_extra(samples, now, total)
         return self.value
+
+    def read_extra(self, samples, now, total):
+        """rps 말고 같이 볼 지표. 서버가 내보내지 않는 항목은 None 으로 둔다."""
+        point = (now, total, total_of(samples, self.metric, 'status="5xx"'),
+                 total_of(samples, "http_request_duration_seconds_sum"),
+                 total_of(samples, "http_request_duration_seconds_count"))
+        if self.window and total < self.window[-1][1]:
+            self.window = []  # 서버 재시작
+        self.window = [p for p in self.window if now - p[0] <= WINDOW_SEC] + [point]
+        old = self.window[0]
+        extra = {"error_pct": None, "latency_ms": None}
+        d_req = total - old[1]
+        if point[2] is not None and old[2] is not None and d_req > 0:
+            extra["error_pct"] = round(100.0 * max(0.0, point[2] - old[2]) / d_req, 1)
+        if None not in (point[3], point[4], old[3], old[4]) and point[4] - old[4] > 0:
+            extra["latency_ms"] = round(1000.0 * (point[3] - old[3]) / (point[4] - old[4]), 1)
+        for key, name in VITALS:
+            extra[key] = total_of(samples, name)
+        extra["vitals_reports"] = total_of(samples, "web_vitals_reports_total")
+        self.extra = extra
+
+    def metrics(self):
+        """지금 보여 줄 부가 지표. 오래 못 읽었으면 빈 값."""
+        if self.ok_at is None or self.clock() - self.ok_at > STALE_SEC:
+            return {}
+        return dict(self.extra)
 
     def rps(self):
         if self.ok_at is None or self.clock() - self.ok_at > STALE_SEC:

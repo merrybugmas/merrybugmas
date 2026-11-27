@@ -408,6 +408,37 @@ class LiveTrafficTest(unittest.TestCase):
         self.assertEqual(w.snapshot_state()["live"]["traffic"], "metrics")
         self.assertIn("LIVE TRAFFIC", "\n".join(xm.ANSI.sub("", l) for l in xm.compose(w, 100, 30)))
 
+    def test_error_rate_latency_and_web_vitals(self):
+        import traffic_live
+        now, page = [0.0], [""]
+
+        def metrics(ok, err, dur_sum, extra=""):
+            page[0] = ('http_requests_total{status="2xx"} %d\nhttp_requests_total{status="5xx"} %d\n'
+                       'http_request_duration_seconds_sum %f\nhttp_request_duration_seconds_count %d\n%s'
+                       % (ok, err, dur_sum, ok + err, extra))
+        f = traffic_live.TrafficFeed(transport=lambda url: page[0], interval=3600, clock=lambda: now[0])
+        f.metric = "http_requests_total"
+        metrics(100, 0, 1.0)
+        f.sample()
+        now[0] = 2.0
+        metrics(180, 20, 6.0, "web_vitals_lcp_seconds 1.25\nweb_vitals_cls 0.02\n")
+        self.assertAlmostEqual(f.sample(), 50.0)  # 2xx 와 5xx 를 합쳐 100건 / 2초
+        m = f.metrics()
+        self.assertEqual(m["error_pct"], 20.0)   # 늘어난 100건 중 5xx 20건
+        self.assertEqual(m["latency_ms"], 50.0)  # 5초 / 100건
+        self.assertEqual((m["lcp_s"], m["cls"], m["inp_s"]), (1.25, 0.02, None))  # 서버가 안 준 항목은 None
+        xm.R.seed(7)
+        w = xm.World()
+        w.auto = False
+        w.traffic = f
+        w.start_stage(w.find_service("WEB"), "traffic")
+        line = "\n".join(xm.ANSI.sub("", l) for l in xm.compose(w, 120, 30))
+        self.assertIn("5xx 20.0%", line)
+        self.assertIn("LCP 1.25s", line)
+        self.assertNotIn("INP", line)
+        self.assertEqual(w.snapshot_state()["traffic"]["web"]["error_pct"], 20.0)
+        self.assertEqual(xm.World().snapshot_state()["traffic"]["web"], {})  # mock 일 때는 지어내지 않는다
+
     def test_failure_falls_back_to_mock_traffic(self):
         f = self.feed()
         self.fail[0] = True

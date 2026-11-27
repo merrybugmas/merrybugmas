@@ -155,14 +155,14 @@ python3 -m unittest discover -s tests -v                             # 스모크
 ```
 
 ## 테스트
-`tests/test_smoke.py` (표준 라이브러리 unittest, 29개, 1.5초):
+`tests/test_smoke.py` (표준 라이브러리 unittest, 30개, 1.5초):
 - 6개 서비스 × 3개 화면(18개 조합) + 타이틀·메뉴·기록 창이 오류 없이 그려지는지
 - 키워드 병정 명령 (지목·복귀·보고)
 - AI 병정을 가짜 OpenAI 응답으로: 묘사로 가리킨 쥐 해석, 트리아지가 mock 판정을 바꾸고 MR 로그에 수정 요약이 붙는지, 브리핑, 요청이 strict JSON Schema 인지, **API 실패 시 키워드로 폴백**하는지
 - 경합·이상 응답: 사람이 내린 판정을 늦게 온 AI 판정이 덮지 않는지, AI 판정이 8초 안에 안 오면 mock 판정으로 넘어가는지, 스키마를 벗어난 응답·429 재시도·판이 바뀐 뒤 도착한 결과
 - 녹화·재생: 녹화한 트리아지 결과가 `--replay` 에서 그대로 나오는지
 - Sentry 실연동을 가짜 Sentry 응답으로: 실제 이슈가 중복 없이 쥐가 되는지, 가짜 쥐가 섞이지 않는지, AI 가 실제 제목을 판정하는지, **읽기 실패 시 mock 으로 폴백**하는지
-- 트래픽 실연동을 가짜 `/metrics` 와 가짜 시계로: 카운터 증가분으로 rps 를 내는지, 서버 재시작·읽기 끊김 처리, 가짜 급증을 섞지 않는지
+- 트래픽 실연동을 가짜 `/metrics` 와 가짜 시계로: 카운터 증가분으로 rps 를 내는지, 서버 재시작·읽기 끊김 처리, 가짜 급증을 섞지 않는지, 5xx 비율·응답 시간·Web Vitals 를 읽고 없는 항목은 비워 두는지
 
 권장 환경: macOS / Linux, 256색 터미널 100x30 이상. macOS · Python 3.9 에서 실행을 확인했고, Linux · Python 3.8 은 문법 호환만 확인했다. Windows 는 WSL 에서 실행한다 (`termios` 사용).
 
@@ -185,11 +185,15 @@ python3 xmas_market.py --live --no-ai    # OpenAI 호출 없이 키워드 판정
 ### 트래픽
 - `.env`: `TRAFFIC_METRICS_URL`(예: `http://localhost:8765/metrics`). 선택: `TRAFFIC_METRIC`(기본 `http_requests_total`) · `TRAFFIC_PEAK`(최고치로 볼 rps, 기본 100) · `TRAFFIC_POLL`(초, 기본 1)
 - 서버의 Prometheus 형식 `/metrics` 를 1초마다 읽어, 요청 수 카운터의 증가분 ÷ 지난 시간으로 rps 를 낸다. 줄 길이·인파 경보는 rps ÷ `TRAFFIC_PEAK` 로 정한다
+- 같은 `/metrics` 에 있으면 **웹 지표**도 읽어 트래픽 화면 윗줄과 개요 카드에 보여 준다 (`./market status` 의 `traffic.web`). 서버가 내보내지 않는 항목은 표시하지 않는다
+  - `5xx` 비율: `http_requests_total{status="5xx"}` 의 최근 10초 증가분 ÷ 전체 증가분. 5% 이상이면 빨갛게, 개요 카드 테두리도 빨개진다
+  - 평균 응답 시간: `http_request_duration_seconds_sum / _count` 의 최근 10초 증가분
+  - Web Vitals(LCP · CLS · INP · TTFB): 브라우저가 실제로 잰 값을 서버가 모아 낸 p75 (`web_vitals_*`). 권장 기준(LCP 2.5초, CLS 0.1, INP 200ms)을 넘으면 빨갛게
 - Grafana 를 거치지 않는다. Prometheus 가 긁어 가는 것과 같은 엔드포인트를 직접 읽는 방식이다
 - 실연동 중에는 `t`·자동 급증이 가짜 급증을 만들지 않는다. 5초 넘게 못 읽으면 마지막 값을 붙들지 않고 0 rps 로 보인다
 
 **검증 범위 (2026-11-27)**: 테스트용 Sentry 프로젝트와 로컬 데모 서버로 확인했다. 실제 서비스의 이슈·트래픽이 아니다.
-- 데모 웹앱 [merrybugmas/demo-web](https://github.com/merrybugmas/demo-web): 일부러 버그를 심어 둔 상점 페이지. 버튼을 누르면 진짜 브라우저 에러 7종이 Sentry 브라우저 SDK 를 거쳐 이슈가 되고, 대시보드가 그것을 읽어 쥐로 만드는 것까지 확인했다. 같은 서버의 `/metrics` 로 트래픽도 확인했다: 부하 생성기로 25 → 110 → 25 rps 를 주자 대시보드 rps 가 그대로 따라가고 줄이 인파 경보까지 늘었다
+- 데모 웹앱 [merrybugmas/demo-web](https://github.com/merrybugmas/demo-web): 일부러 버그를 심어 둔 상점 페이지. 버튼을 누르면 진짜 브라우저 에러 7종이 Sentry 브라우저 SDK 를 거쳐 이슈가 되고, 대시보드가 그것을 읽어 쥐로 만드는 것까지 확인했다. 같은 서버의 `/metrics` 로 트래픽도 확인했다: 부하 생성기로 25 → 110 → 25 rps 를 주자 대시보드 rps 가 그대로 따라가고 줄이 인파 경보까지 늘었다. 요청의 15% 를 503 API 로 보내자 5xx 비율이 14% 대로 표시됐고, 브라우저가 보고한 LCP·CLS·TTFB 도 표시됐다
 - `python3 tools/sentry_seed.py`: 평가셋 제목으로 테스트 이벤트를 직접 넣는 스크립트(`SENTRY_DSN` 필요). 12건을 보내 11건이 이슈가 됐다
 
 ## 더 연동할 때

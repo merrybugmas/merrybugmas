@@ -692,6 +692,30 @@ class World:
         traffic = "트래픽 = 실제 서버 /metrics (최고치 %d rps)" % self.traffic.peak if self.traffic else "트래픽은 mock"
         return "%s, %s" % (mice, traffic)
 
+    def web_metrics(self):
+        """실제 서버 /metrics 에서 읽은 부가 지표 (5xx 비율·응답 시간·Web Vitals). 실연동이 아니면 빈 dict."""
+        return self.traffic.metrics() if self.traffic is not None else {}
+
+    def web_metric_segs(self):
+        """부가 지표 한 줄: 있는 항목만. 나쁜 값은 빨갛게 (5xx 5% 이상, LCP 2.5초 초과, CLS 0.1 초과, INP 200ms 초과)."""
+        m, segs = self.web_metrics(), []
+
+        def add(text, bad):
+            segs.extend([("  " if segs else "", 245), (text, 203 if bad else 250, bad)])
+        if m.get("error_pct") is not None:
+            add("5xx %.1f%%" % m["error_pct"], m["error_pct"] >= 5)
+        if m.get("latency_ms") is not None:
+            add("응답 %dms" % round(m["latency_ms"]), m["latency_ms"] >= 500)
+        if m.get("lcp_s") is not None:
+            add("LCP %.2fs" % m["lcp_s"], m["lcp_s"] > 2.5)
+        if m.get("cls") is not None:
+            add("CLS %.2f" % m["cls"], m["cls"] > 0.1)
+        if m.get("inp_s") is not None:
+            add("INP %dms" % round(m["inp_s"] * 1000), m["inp_s"] > 0.2)
+        if m.get("ttfb_s") is not None:
+            add("TTFB %dms" % round(m["ttfb_s"] * 1000), m["ttfb_s"] > 0.8)
+        return segs
+
     def live_badge(self):
         parts = [n for n, on in (("SENTRY", self.live), ("TRAFFIC", self.traffic)) if on is not None]
         return "LIVE " + "+".join(parts) if parts else "MOCK"
@@ -1231,6 +1255,7 @@ class World:
             "traffic": {"rps": int(self.rps), "peak_rps": int(self.peak), "queue": len(self.queue),
                         "queue_offscreen": self.queue_offscreen() if self.w else 0,
                         "admitted": self.admitted, "crowd": label,
+                        "web": self.web_metrics(),  # 실연동일 때만: error_pct·latency_ms·lcp_s·cls·inp_s·ttfb_s
                         "history_rps": [int(v) for v in self.hist[-20:]]},
             "mice": [{"id": m.issue["id"], "title": m.issue["title"],
                       "kind": "pending" if m.issue.get("ai") == "pending" else m.issue["kind"],
@@ -1670,10 +1695,14 @@ def traffic_card(world, width, height):
         [("  30초 최고 %s rps" % format(int(peak), ","), 245)],
         [],
     ]
+    web = world.web_metric_segs()
+    if web:
+        body[-1:] = [[("  ", 245)] + web, []]
+        alert = alert or (world.web_metrics().get("error_pct") or 0) >= 5
     rows = max(2, min(12, height - 2 - len(body) - 2))
     body += [[("  " + r, 51)] for r in bars(world.hist, iw - 4, world.peak, rows)]
     body.append([("  " + pad("최근 30초", iw - 15) + "max " + format(int(world.peak), ","), 242)])
-    title = [("1  🎄 트래픽", 231, True), (" · Grafana", 245)]
+    title = [("1  🎄 트래픽", 231, True), (" · 서버 /metrics" if world.traffic is not None else " · Grafana", 245)]
     return card(width, height, title, "클릭 ▸ 대기열", body, 196 if alert else 37)
 
 
@@ -1994,7 +2023,9 @@ def compose(world, w, h, paused=False):
             ("  🎄 상점 대기열 ", 250), ("%d명" % len(world.queue), 231, True),
             ("  화면 밖 +%d" % off if off else "", 203, True),
             ("  │ ", 240), ("%s rps  " % format(int(world.rps), ","), 231, True), (label, lcol, True),
-            ("  │ 계산 완료 %d명" % world.admitted, 245), ("   (rps가 오르면 줄이 길어진다)", 242)], w, 235))
+            ("  │ 계산 완료 %d명" % world.admitted, 245)]
+            + ([("  │ ", 240)] + world.web_metric_segs() if world.web_metric_segs()
+               else [("   (rps가 오르면 줄이 길어진다)", 242)]), w, 235))
         lines.append(seg_line([("  트래픽 30초 ", 250), (spark(world.hist, n, world.peak), 51)], w, 234))
         lines += world.draw("traffic").lines()
         keys = "[Esc]메뉴 [0]개요 [2]Sentry [t]트래픽 급증 [space]정지 [q]종료"
