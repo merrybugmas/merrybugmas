@@ -40,6 +40,7 @@ class Session:
         self.run = None
         self.requests = {}
         self.cursor = 0
+        self.peak_waiting = 0
         self.selected = None
         self.detail = None
         self.comparison = None
@@ -168,6 +169,7 @@ class Session:
                 self.restoring = False
                 self.historical_requests = set()
                 self.requests, self.cursor, self.selected, self.detail = {}, 0, None, None
+                self.peak_waiting = 0
                 self.comparison = None
                 self.lines = []
                 self.message = '같은 요청 계획으로 재실험합니다.' if action == 'replay' else '실제 상품 검색 부하를 시작합니다.'
@@ -211,6 +213,8 @@ class Session:
                     else:
                         request.update(data)
                         request['server_status'] = kind.split('.')[1]
+                        if kind == 'request.queued':
+                            self.peak_waiting = max(self.peak_waiting, data.get('queue_size', 0))
                         if kind == 'request.processing':
                             request['processing_seen'] = True
                     if kind in ('request.succeeded', 'request.failed', 'request.cancelled', 'client.result'):
@@ -245,6 +249,7 @@ class Session:
                 self.restoring = False
             previous_status = self.run['status'] if self.run else None
             self.run = snapshot
+            self.peak_waiting = max(self.peak_waiting, snapshot['server_counts']['queued'])
             if snapshot['status'] in ('completed', 'stopped', 'failed') and previous_status != snapshot['status']:
                 counts = snapshot['client_counts']
                 label = {'completed': '실험 종료', 'stopped': '실험 중지 완료', 'failed': '실험 실패'}[snapshot['status']]
@@ -257,7 +262,7 @@ class Session:
         with self.lock:
             return {'server': self.url, 'run_id': self.run_id, 'baseline_run_id': self.baseline, 'run': copy.deepcopy(self.run),
                     'busy': self.busy, 'error': self.error, 'message': self.message, 'agent': self.agent,
-                    'selected': self.selected, 'detail': copy.deepcopy(self.detail), 'comparison': copy.deepcopy(self.comparison)}
+                    'peak_waiting': self.peak_waiting, 'selected': self.selected, 'detail': copy.deepcopy(self.detail), 'comparison': copy.deepcopy(self.comparison)}
 
     # 실제 대기 고객을 기존 픽셀 캐릭터로 표현
     def update(self, world, dt, ui):
@@ -289,17 +294,17 @@ class Session:
             rid = request['request_id']
             person = previous.get(rid)
             if person is None:
-                goal = ui.Queuer.GAP * i
+                goal = world.queue_gap * i
                 person = ui.Queuer(max(getattr(world, 'qvis', 0) + 8, goal + 8))
-                person.entry_speed = ui.Queuer.SPEED
+                person.entry_speed = ui.Queuer.SPEED * 2
                 person.pal = self.customer_palette(rid, ui).copy()
                 person.request_id = rid
-            goal = ui.Queuer.GAP * i
+            goal = world.queue_gap * i
             before = person.d
             if person.d > goal + .05:
                 person.d -= min(person.d - goal, person.entry_speed * dt)
             if world.queue:
-                person.d = max(person.d, world.queue[-1].d + ui.Queuer.GAP)
+                person.d = max(person.d, world.queue[-1].d + world.queue_gap)
             person.moving = person.d < before - .05
             if person.moving:
                 person.step += dt
@@ -321,7 +326,7 @@ class Session:
                     continue
                 self.seen_finished.add(rid)
                 bad = self.failed(request)
-                visible_waiter = rid in previous and world.qpos(previous[rid].d)[0] >= 0
+                visible_waiter = rid in previous and 0 <= world.qpos(previous[rid].d)[1] <= world.bottom
                 palette = self.customer_palette(rid, ui).copy()
                 start = world.guide_front
                 if rid in previous_serving:
@@ -330,12 +335,12 @@ class Session:
                     start = world.qpos(previous[rid].d)
                 person = {'palette': palette, 'failed': bad, 'start': start,
                           'category': request.get('query', {}).get('category'), 'request_id': rid,
-                          'via_guide': rid not in previous_serving and not bad}
+                          'via_guide': rid not in previous_serving and not bad, 'guided': rid in previous_serving}
                 if rid in previous_serving or visible_waiter:
                     person['born'] = world.t
                     self.departures[rid] = person
                 else:
-                    person['start'] = (-4, world.guide_front[1])
+                    person['start'] = world.entrance
                     person['via_guide'] = True
                     self.pending_departures[bad].append((rid, person))
             outcome_counts = {bad: sum(self.failed(request_map[rid]) == bad for rid in self.departures if rid in request_map)
@@ -407,6 +412,18 @@ class Session:
         if request.get('server_status') == 'processing':
             return '?', 33
         return '…', 214
+
+    # 안내소에 도착한 뒤에만 고객 머리 위 상태 표시
+    @staticmethod
+    def customer_mark_visible(world, person, processing=False):
+        age = world.t - person['born']
+        if processing:
+            return age >= person['duration']
+        if person.get('via_guide'):
+            start, front = person['start'], world.guide_front
+            distance = abs(front[0] - start[0]) + abs(front[1] - start[1]) / 2
+            return age * 14 >= distance + 2.8
+        return person.get('guided', False)
 
     # 화면의 출구 경로 길이에 맞춰 연속 퇴장 인원 확보
     @staticmethod
@@ -550,20 +567,18 @@ class Session:
         status = '연결 확인 필요: ' + state['error'] if state['error'] else ('백엔드 연결 중' if not snapshot else
                  f"{snapshot['status']}  {state['run_id']}  " + ('수집 완료' if snapshot['telemetry_complete'] else '이벤트 수집 중'))
         cv = world.draw('traffic')
-        # 상태 문구는 고객 동선과 겹치지 않는 상단에 표시
+        # 안내소 상태는 간판 위의 전용 공간에 표시
         message = PHASES.get(snapshot['agent_phase'], '작업 대기') if snapshot else '마켓 개장 준비'
         if snapshot and snapshot['agent_phase'] == 'idle':
             message = ':( 안내 지연 중' if snapshot['server_counts']['queued'] else ':) 요청 처리 중' if snapshot['status'] in ('pending', 'running') else ':) 실험 종료'
-        frame.append(ui.seg_line([('  ' + message + ' | ' + status, 203 if state['error'] else 159)], width, 235))
+        frame.append(ui.seg_line([('  ' + status, 203 if state['error'] else 159)], width, 235))
         for x, y in ((2, world.gpx - 13), (max(3, scene_width - 9), world.gpx - 13)):
             cv.blit(ui.SOLDIER, x, y, ui.SOLDIER_PAL)
         with self.lock:
             request_map = dict(self.requests)
         for person in world.queue:
             x, y = world.qpos(person.d)
-            if x >= 0:
-                mark, color = self.customer_mark(request_map.get(person.request_id, {}))
-                cv.put(int(x) + 1, max(0, int(y) // 2 - 1), mark, color)
+            if 0 <= y <= world.bottom:
                 world.hits.append((int(x) + 1, int(x) + 3, int(y) // 2 + 4, int(y) // 2 + 7,
                                    lambda rid=person.request_id: self.command('select ' + rid)))
         people = [(request_map[rid], *self.service_position(world, person), True, person)
@@ -578,10 +593,19 @@ class Session:
             walking = moving and int((world.t - person['born']) * 6) % 2
             sprite = ui.VISITOR[:4] + (ui.VISITOR_STEP if walking else ui.VISITOR[4:])
             cv.blit(sprite, x, y, palette)
-            mark, color = self.customer_mark(request)
-            cv.put(int(x) + 1, max(0, int(y) // 2 - 1), mark, color)
+            if self.customer_mark_visible(world, person, processing):
+                mark, color = self.customer_mark(request)
+                cv.put(int(x) + 1, max(0, int(y) // 2 - 1), mark, color)
             world.hits.append((int(x) + 1, int(x) + 3, int(y) // 2 + 4, int(y) // 2 + 7,
                                lambda rid=request['request_id']: self.command('select ' + rid)))
+        cv.put(world.tree_cx - ui.dw(message) // 2, max(0, world.guide_top // 2 - 3),
+               message, 16, 230, True)
+        if snapshot:
+            queued = snapshot['server_counts']['queued']
+            badge_x = world.tree_cx + 8
+            badge_row = min(world.sh - 2, world.guide_front[1] // 2 + 4)
+            cv.put(badge_x, badge_row, f' 현재 대기 {queued}명 ', 231, 160 if queued else 238, True)
+            cv.put(badge_x, badge_row + 1, f" 관측 최대 {max(state['peak_waiting'], queued)}명 ", 16, 230, True)
         panel = self.panel(state)
         if len(world.booths) < 8:
             panel.insert(1, '상점 8개: 터미널 폭 180열 이상')

@@ -188,7 +188,7 @@ class TrafficFrontendTests(unittest.TestCase):
         session.apply([{'type': 'request.succeeded', 'request_id': 'r1', 'customer_id': 'c1', 'data': {}}])
         world.update(.1)
         person = session.departures['r1']
-        self.assertEqual(session.departure_position(world, person), (-4, world.guide_front[1]))
+        self.assertEqual(session.departure_position(world, person), world.entrance)
         world.update(.6)
         position = session.departure_position(world, person)
         session.apply([{'type': 'request.succeeded', 'request_id': 'r2', 'customer_id': 'c2', 'data': {}}])
@@ -223,7 +223,7 @@ class TrafficFrontendTests(unittest.TestCase):
             session.apply([{'type': 'request.' + kind, 'request_id': 'r1', 'customer_id': 'c1', 'data': {}}])
             world.update(.1)
             canvas = world.draw('traffic')
-            self.assertEqual(canvas.get(world.tree_cx - 1, world.bottom - 14), 33)
+            self.assertEqual(canvas.get(world.tree_cx - 1, world.guide_top + 6), 33)
 
     # 짧은 요청도 고객 안내 장면을 유지한 뒤 같은 캐릭터로 퇴장
     def test_processing_visual_holds_without_changing_real_status(self):
@@ -277,7 +277,7 @@ class TrafficFrontendTests(unittest.TestCase):
         self.assertGreater(person.d, 0)
         self.assertLess(person.d, initial)
         world.update(.3)
-        self.assertAlmostEqual(initial - person.d, ui.Queuer.SPEED * .6)
+        self.assertAlmostEqual(initial - person.d, person.entry_speed * .6)
         world.update(10)
         self.assertAlmostEqual(person.d, 0)
 
@@ -355,13 +355,13 @@ class TrafficFrontendTests(unittest.TestCase):
         session.apply([{'type': 'request.queued', 'request_id': f'r-{i}', 'customer_id': f'c-{i}', 'data': {}}
                        for i in range(12)])
         world.update(10)
-        positions = {p.request_id: world.qpos(p.d) for p in world.queue}
+        positions = {p.request_id: world.qpos(p.d) for p in world.queue if world.qpos(p.d)[1] <= world.bottom}
         palettes = {p.request_id: p.pal.copy() for p in world.queue}
         session.apply([{'type': 'request.failed', 'request_id': rid, 'customer_id': rid, 'data': {'error_code': 'QUEUE_TIMEOUT'}}
                        for rid in positions])
         world.update(0)
-        self.assertFalse(world.queue)
-        self.assertEqual(len(session.departures), 12)
+        self.assertTrue(set(positions).isdisjoint(p.request_id for p in world.queue))
+        self.assertEqual(len(session.departures), len(positions))
         for rid, position in positions.items():
             self.assertEqual(session.departure_position(world, session.departures[rid]), position)
             self.assertEqual(session.departures[rid]['palette'], palettes[rid])
@@ -447,19 +447,19 @@ class TrafficFrontendTests(unittest.TestCase):
         session.apply([{'type': 'request.queued', 'request_id': f'r{i}', 'customer_id': f'c{i}', 'data': {}}
                        for i in range(12)])
         world.update(10)
-        person = session.characters['r11']
+        person = session.characters['r2']
         palette = person.pal.copy()
-        session.apply([{'type': 'request.processing', 'request_id': 'r11', 'customer_id': 'c11', 'data': {}}])
+        session.apply([{'type': 'request.processing', 'request_id': 'r2', 'customer_id': 'c2', 'data': {}}])
         world.update(.1)
-        self.assertNotIn('r11', session.serving)
-        self.assertIs(session.characters['r11'], person)
+        self.assertNotIn('r2', session.serving)
+        self.assertIs(session.characters['r2'], person)
         position = world.qpos(person.d)
-        session.apply([{'type': 'request.succeeded', 'request_id': 'r11', 'customer_id': 'c11', 'data': {}}])
+        session.apply([{'type': 'request.succeeded', 'request_id': 'r2', 'customer_id': 'c2', 'data': {}}])
         world.update(.1)
-        self.assertNotIn('r11', session.characters)
-        self.assertNotIn('r11', session.serving)
-        self.assertEqual(session.departures['r11']['palette'], palette)
-        self.assertEqual(session.departure_position(world, session.departures['r11']), position)
+        self.assertNotIn('r2', session.characters)
+        self.assertNotIn('r2', session.serving)
+        self.assertEqual(session.departures['r2']['palette'], palette)
+        self.assertEqual(session.departure_position(world, session.departures['r2']), position)
 
     # 병정은 양쪽 노점 끝에 정렬하고 상태 문구는 고객 동선 밖에 표시
     def test_decorations_and_status_stay_outside_customer_routes(self):
@@ -470,10 +470,12 @@ class TrafficFrontendTests(unittest.TestCase):
         guards = [call.args[2:4] for call in blit.call_args_list if call.args[1] == ui.SOLDIER]
         self.assertEqual(guards, [(2, world.gpx - 13), (world.w - 9, world.gpx - 13)])
         self.assertTrue(all(x >= 11 and x + 9 <= world.w - 10 for x, name, _ in world.booths))
-        self.assertIn('마켓 개장 준비', ui.ANSI.sub('', frame[2]))
-        self.assertNotIn('마켓 개장 준비', ui.ANSI.sub('', '\n'.join(frame[3:-6])))
+        self.assertNotIn('마켓 개장 준비', ui.ANSI.sub('', frame[2]))
+        scene = ui.ANSI.sub('', '\n'.join(frame[3:-6]))
+        self.assertIn('마켓 개장 준비', scene)
+        self.assertIn('버그마스 마켓 안내소', scene)
         self.assertEqual(world.draw().get(world.w - 9, 6), 230)
-        self.assertEqual(world.qpos(world.qvis)[0], -4)
+        self.assertEqual(world.qpos(world.qvis), (world.guide_front[0], world.bottom + 1))
 
     # 상점은 트리 양쪽에 같은 크기로 대칭 배치하고 안내소는 중앙에 위치
     def test_market_layout_is_symmetric_at_supported_widths(self):
@@ -498,11 +500,11 @@ class TrafficFrontendTests(unittest.TestCase):
         world = TrafficWorld(session)
         compose(world, 140, 45)
         for category in ('cookie', 'hot_choco', 'gift', 'toy', 'ornament'):
-            person = {'start': (-4, world.guide_front[1]), 'via_guide': True,
+            person = {'start': world.entrance, 'via_guide': True,
                       'category': category, 'failed': False, 'born': world.t}
             route = session.departure_route(world, person)
             target = world.shop_target(category)
-            self.assertEqual(route[0][0], -4)
+            self.assertEqual(route[0], world.entrance)
             self.assertEqual(route[1], world.guide_front)
             self.assertIn(target, route[2:])
             self.assertGreater(route.index(target), route.index(world.guide_front))
@@ -544,6 +546,69 @@ class TrafficFrontendTests(unittest.TestCase):
         for category in ('gift', 'toy', 'cookie'):
             targets = {world.shop_target(category, f'r-{i}') for i in range(10)}
             self.assertEqual(len(targets), 2)
+
+    # 고객은 안내소 아래에서 수직으로 입장하며 안내 전에는 결과 표시를 숨김
+    def test_vertical_entry_hides_results_until_guide_visit(self):
+        session = Session('http://127.0.0.1:8000')
+        world = TrafficWorld(session)
+        compose(world, 180, 45)
+        person = {'start': world.entrance, 'via_guide': True, 'category': 'cookie',
+                  'failed': False, 'born': world.t}
+        distance = (world.entrance[1] - world.guide_front[1]) / 2
+        self.assertFalse(session.customer_mark_visible(world, person))
+        world.t += distance / 28
+        x, y = session.departure_position(world, person)
+        self.assertEqual(x, world.guide_front[0])
+        self.assertGreater(y, world.guide_front[1])
+        self.assertFalse(session.customer_mark_visible(world, person))
+        world.t = person['born'] + distance / 14 + .21
+        self.assertTrue(session.customer_mark_visible(world, person))
+        self.assertEqual(session.departure_route(world, person)[1], world.guide_front)
+
+    # 상점 이름은 글자 폭을 기준으로 간판 가운데에 배치
+    def test_shop_names_are_centered_in_signs(self):
+        world = TrafficWorld(Session('http://127.0.0.1:8000'))
+        compose(world, 180, 45)
+        canvas = world.draw()
+        row = (world.gpx - 8 + 4) // 2
+        for x, name, _ in world.booths:
+            start = x + (9 - ui.dw(name)) // 2
+            text = ''.join(canvas.text[(start + i, row)][0] for i in range(len(name)))
+            self.assertEqual(text, name)
+            self.assertLessEqual(abs((start - x) - (9 - ui.dw(name) - (start - x))), 1)
+
+    # 상점 이름은 중복 없이 정확한 가운데 정렬이 가능한 폭으로 표시
+    def test_eight_shop_names_are_distinct_and_centered(self):
+        world = TrafficWorld(Session('http://127.0.0.1:8000'))
+        compose(world, 180, 45)
+        names = [name for _, name, _ in world.booths]
+        self.assertEqual(len(set(names)), 8)
+        self.assertIn('TOY', names)
+        self.assertIn('DOLLS', names)
+        self.assertTrue(all((9 - ui.dw(name)) % 2 == 0 for name in names))
+
+    # 좌우에 지붕 색 네 가지를 하나씩 배치
+    def test_roof_colors_are_evenly_distributed_on_each_side(self):
+        world = TrafficWorld(Session('http://127.0.0.1:8000'))
+        compose(world, 180, 45)
+        for shops in (world.booths[::2], world.booths[1::2]):
+            self.assertEqual({stripes for _, _, stripes in shops}, set(ui.BOOTH_STRIPES))
+
+    # 빠르게 사라진 대기도 이벤트에서 최대 인원을 보존하고 다음 실험에서 초기화
+    def test_peak_waiting_remains_visible_after_queue_drains(self):
+        session = Session('http://127.0.0.1:8000', transport=lambda *args: {'run_id': 'new-run'})
+        session.run_id = 'run-1'
+        session.run = snapshot(status='completed')
+        session.apply([{'type': 'request.queued', 'request_id': 'r', 'customer_id': 'c', 'data': {'queue_size': 7}},
+                       {'type': 'request.succeeded', 'request_id': 'r', 'customer_id': 'c', 'data': {}}])
+        world = TrafficWorld(session)
+        world.update(.1)
+        frame = ui.ANSI.sub('', '\n'.join(compose(world, 180, 45)))
+        self.assertIn('현재 대기 0명', frame)
+        self.assertIn('관측 최대 7명', frame)
+        self.assertEqual(session.status()['peak_waiting'], 7)
+        session.execute(['surge'])
+        self.assertEqual(session.status()['peak_waiting'], 0)
 
 
 if __name__ == '__main__':

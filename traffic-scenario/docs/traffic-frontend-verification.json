@@ -137,5 +137,12 @@
   "eight_shop_layout_tests_passed": 71,
   "shops_per_side": 4,
   "shop_gap_columns": 5,
-  "recommended_terminal_columns": 180
+  "recommended_terminal_columns": 180,
+  "vertical_entry_tests_passed": 73,
+  "status_mark_hidden_before_guide": true,
+  "shop_names_centered": true,
+  "shop_roof_and_queue_badge_tests_passed": 76,
+  "unique_shop_names": true,
+  "all_roof_colors_on_each_side": true,
+  "observed_queue_peak_persists_until_next_run": true
 }

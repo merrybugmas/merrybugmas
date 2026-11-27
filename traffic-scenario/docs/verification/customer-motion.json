@@ -1,10 +1,10 @@
 {
   "employee_visible_in_all_frames": true,
-  "max_visible_failure_departures": 2,
-  "max_visible_success_departures": 8,
+  "max_visible_failure_departures": 3,
+  "max_visible_success_departures": 9,
   "frames": 80,
   "run": {
-    "run_id": "run-aae3e137043049de8db2",
+    "run_id": "run-c144ce7029cf41faabea",
     "status": "completed",
     "source_run_id": null,
     "config": {
@@ -14,30 +14,30 @@
       "seed": 42,
       "client_timeout_ms": 5000
     },
-    "started_at": "2026-11-27T11:50:25.906Z",
-    "finished_at": "2026-11-27T11:50:32.867Z",
-    "last_seq": 35258,
+    "started_at": "2026-11-27T12:17:18.087Z",
+    "finished_at": "2026-11-27T12:17:24.884Z",
+    "last_seq": 41160,
     "server_counts": {
-      "received": 542,
+      "received": 616,
       "queued": 0,
       "processing": 0,
-      "succeeded": 540,
-      "failed": 2,
+      "succeeded": 608,
+      "failed": 8,
       "cancelled": 0
     },
     "client_counts": {
       "planned": 1000,
       "sent": 1000,
-      "success": 278,
-      "failed": 722,
+      "success": 346,
+      "failed": 654,
       "pending": 0,
       "dropped": 0
     },
     "metrics": {
-      "avg_response_ms": 2019.2654936757817,
-      "p95_response_ms": 4457.515166956,
-      "failure_rate": 0.722,
-      "success_rps": 41.30961970476289
+      "avg_response_ms": 2535.831864591152,
+      "p95_response_ms": 4973.955916939303,
+      "failure_rate": 0.654,
+      "success_rps": 52.11041436244848
     },
     "telemetry_complete": true,
     "agent_phase": "idle",
@@ -50,7 +50,6 @@
       "warmup_policy": "reference-query-warmup-v1"
     }
   },
-  "backend_metrics_unchanged": true,
-  "service_visual_hold_seconds": 0.6,
-  "route_animation_uses_actual_request_measurements": false
+  "animation_only_delay_seconds": 0.6,
+  "backend_metrics_unchanged": true
 }

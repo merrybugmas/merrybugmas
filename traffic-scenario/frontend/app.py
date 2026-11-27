@@ -40,29 +40,36 @@ class TrafficWorld(ui.World):
             self.gpx = min(self.gpx, max(6, (self.bottom - 42) // 2 * 2))
         self.tree_cx = (width - 1) // 2
         self.gate_x = self.tree_cx + 2
-        self.guide_front = (self.tree_cx - 1, self.bottom - 5)
-        self.qpts = [self.guide_front, (-4, self.guide_front[1])]
-        self.qvis = self.guide_front[0] + 4
-        self.qcap = int(self.qvis // ui.Queuer.GAP)
+        self.guide_top = max(0, self.bottom - 32)
+        self.guide_front = (self.tree_cx - 1, min(self.bottom - 5, self.guide_top + 15))
+        self.entrance = (self.guide_front[0], self.bottom + 6)
+        self.queue_gap = 7
+        self.qpts = [self.guide_front, self.entrance]
+        self.qvis = self.bottom - self.guide_front[1] + 1
+        self.qcap = int(self.qvis // self.queue_gap)
         self.booths = []
         self.shop_categories = []
         pairs = [('COOKIES', 'COCOA', ('cookie',), ('hot_choco',)),
-                 ('GIFTS', 'TOYS', ('gift',), ('toy',)),
-                 ('ORNAMENTS', 'GIFTS', ('ornament',), ('gift',)),
-                 ('COOKIES', 'TOYS', ('cookie',), ('toy',))]
+                 ('GIFTS', 'TOY', ('gift',), ('toy',)),
+                 ('ORNAMENTS', 'SANTA', ('ornament',), ('gift',)),
+                 ('BAKES', 'DOLLS', ('cookie',), ('toy',))]
         for index, (left_name, right_name, left_categories, right_categories) in enumerate(pairs):
             left = (width - 9) // 2 - 14 - index * 14
             if left < 11:
                 break
-            for x, name, categories in ((left, left_name, left_categories),
-                                         (width - 9 - left, right_name, right_categories)):
-                self.booths.append((x, name, ui.BOOTH_STRIPES[len(self.booths) % len(ui.BOOTH_STRIPES)]))
+            for side, (x, name, categories) in enumerate(((left, left_name, left_categories),
+                                                         (width - 9 - left, right_name, right_categories))):
+                self.booths.append((x, name, ui.BOOTH_STRIPES[(index + side) % len(ui.BOOTH_STRIPES)]))
                 self.shop_categories.append(categories)
         if len(self.booths) < 6:
             self.shop_categories[0] += ('ornament', 'gift', 'toy')
             x, _, stripes = self.booths[0]
             self.booths[0] = (x, 'GOODS', stripes)
             self.shop_categories[1] += ('cookie',)
+
+    # 안내소 바로 아래에서 위로 이어지는 대기줄 위치 계산
+    def qpos(self, distance):
+        return self.guide_front[0], self.guide_front[1] + distance
 
     # 요청 상품 종류에 맞는 상점 앞 안내 위치 계산
     def shop_target(self, category, request_id=''):
@@ -90,7 +97,8 @@ class TrafficWorld(ui.World):
             for column in range(9):
                 canvas.rect(x + column, top + 1, 1, 3, stripes[(column // 2) % 2])
             canvas.rect(x, top + 4, 9, 4, 180)
-            canvas.put(x, (top + 4) // 2, name.center(9), 230, 94, True)
+            canvas.rect(x, top + 4, 9, 2, 94)
+            canvas.put(x + (9 - ui.dw(name)) // 2, (top + 4) // 2, name, 230, 94, True)
             canvas.rect(x, top + 8, 9, 1, 130)
             canvas.set(x, top + 9, 94)
             canvas.set(x + 8, top + 9, 94)
@@ -106,7 +114,7 @@ class TrafficWorld(ui.World):
         for dx, dy in ((0, 0), (-1, 0), (1, 0), (0, -1)):
             canvas.set(self.tree_cx + dx, self.gpx - cone - 1 + dy, 226)
 
-        x, y = self.tree_cx - 6, self.bottom - 20
+        x, y = self.tree_cx - 6, self.guide_top
         canvas.rect(x, y, 13, 3, 196)
         for column in range(0, 13, 4):
             canvas.rect(x + column, y, 2, 3, 255)
@@ -115,13 +123,12 @@ class TrafficWorld(ui.World):
         canvas.blit(ui.VISITOR, self.tree_cx - 1, y + 4,
                     {'H': 255, 'S': 223, 'C': 33, 'P': 24, 'k': 16})
         canvas.rect(x, y + 10, 13, 2, 180)
-        canvas.put(x + 1, y // 2 - 1, '마켓 안내소', 226, 22, True)
+        sign = '버그마스 마켓 안내소'
+        canvas.put(self.tree_cx - ui.dw(sign) // 2, y // 2 - 1, sign, 226, 22, True)
         canvas.blit(ui.ELF_SPR, x - 5, y + 4, ui.ELF_PAL)
         for person in self.queue:
             px, py = self.qpos(person.d)
             canvas.blit(ui.VISITOR[:4] + (ui.VISITOR_STEP if person.walking else ui.VISITOR[4:]), px, py, person.pal)
-        if self.queue_offscreen():
-            canvas.put(0, self.guide_front[1] // 2 - 1, '◀ +%d명' % self.queue_offscreen(), 231, 160, True)
 
     # 채팅 명령을 트래픽 실험에 전달
     def command(self, line):
