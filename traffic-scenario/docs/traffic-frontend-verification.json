@@ -128,5 +128,14 @@
   "guards_aligned_at_market_edges": true,
   "status_message_moved_to_header": true,
   "queued_customers_enter_at_constant_speed": true,
-  "unseen_results_enter_from_offscreen": true
+  "unseen_results_enter_from_offscreen": true,
+  "central_market_layout_tests_passed": 69,
+  "guide_booth_centered": true,
+  "symmetric_shop_pairs": true,
+  "successful_customers_visit_requested_category": true,
+  "customer_marks_clear_shop_signs": true,
+  "eight_shop_layout_tests_passed": 71,
+  "shops_per_side": 4,
+  "shop_gap_columns": 5,
+  "recommended_terminal_columns": 180
 }

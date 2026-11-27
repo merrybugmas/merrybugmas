@@ -33,13 +33,42 @@ class TrafficWorld(ui.World):
         self.t += dt
         self.experiment.update(self, dt, ui)
 
-    # 입장과 퇴장 동선을 분리하고 병정 옆 상점 공간 확보
+    # 트리 양쪽에 같은 크기의 상점과 병정 공간 배치
     def layout(self, width, height):
         super().layout(width, height)
-        self.qpts = [(self.gate_x - 4, self.bottom - 5), (-4, self.bottom - 5)]
-        self.qvis = self.gate_x
+        if height >= 25:
+            self.gpx = min(self.gpx, max(6, (self.bottom - 42) // 2 * 2))
+        self.tree_cx = (width - 1) // 2
+        self.gate_x = self.tree_cx + 2
+        self.guide_front = (self.tree_cx - 1, self.bottom - 5)
+        self.qpts = [self.guide_front, (-4, self.guide_front[1])]
+        self.qvis = self.guide_front[0] + 4
         self.qcap = int(self.qvis // ui.Queuer.GAP)
-        self.booths = [booth for booth in self.booths if booth[0] + len(booth[1]) + 4 <= width - 10]
+        self.booths = []
+        self.shop_categories = []
+        pairs = [('COOKIES', 'COCOA', ('cookie',), ('hot_choco',)),
+                 ('GIFTS', 'TOYS', ('gift',), ('toy',)),
+                 ('ORNAMENTS', 'GIFTS', ('ornament',), ('gift',)),
+                 ('COOKIES', 'TOYS', ('cookie',), ('toy',))]
+        for index, (left_name, right_name, left_categories, right_categories) in enumerate(pairs):
+            left = (width - 9) // 2 - 14 - index * 14
+            if left < 11:
+                break
+            for x, name, categories in ((left, left_name, left_categories),
+                                         (width - 9 - left, right_name, right_categories)):
+                self.booths.append((x, name, ui.BOOTH_STRIPES[len(self.booths) % len(ui.BOOTH_STRIPES)]))
+                self.shop_categories.append(categories)
+        if len(self.booths) < 6:
+            self.shop_categories[0] += ('ornament', 'gift', 'toy')
+            x, _, stripes = self.booths[0]
+            self.booths[0] = (x, 'GOODS', stripes)
+            self.shop_categories[1] += ('cookie',)
+
+    # 요청 상품 종류에 맞는 상점 앞 안내 위치 계산
+    def shop_target(self, category, request_id=''):
+        matches = [i for i, categories in enumerate(self.shop_categories) if category in categories] or [0]
+        index = matches[sum(request_id.encode()) % len(matches)]
+        return self.booths[index][0] + 3, self.gpx + 6
 
     # 달은 물음표처럼 보이지 않도록 둥근 모양으로 표시
     def draw(self, view='traffic'):
@@ -54,14 +83,45 @@ class TrafficWorld(ui.World):
         canvas.set(mx + 1, my + 1, 229)
         return canvas
 
-    # 안내소 간판을 트래픽 화면에서만 표시
+    # 대칭 노점과 중앙 트리 및 직원 한 명이 있는 안내소 표시
     def draw_market(self, canvas, top):
-        super().draw_market(canvas, top)
-        canvas.put(self.gate_x - 1, (self.bottom - 16) // 2, ' 안내소 ', 226, 22, True)
-        # 직원은 요청 상태와 관계없이 안내소 안에 고정 표시
-        canvas.rect(self.gate_x + 2, self.bottom - 8, 5, 6, 52)
-        canvas.blit(ui.VISITOR, self.gate_x + 3, self.bottom - 8,
+        for x, name, stripes in self.booths:
+            canvas.rect(x, top, 9, 1, 255)
+            for column in range(9):
+                canvas.rect(x + column, top + 1, 1, 3, stripes[(column // 2) % 2])
+            canvas.rect(x, top + 4, 9, 4, 180)
+            canvas.put(x, (top + 4) // 2, name.center(9), 230, 94, True)
+            canvas.rect(x, top + 8, 9, 1, 130)
+            canvas.set(x, top + 9, 94)
+            canvas.set(x + 8, top + 9, 94)
+        cone = min(17, self.gpx - 3)
+        for row in range(cone):
+            half = int((row + 1) * .55)
+            for dx in range(-half, half + 1):
+                color = 22 if abs(dx) == half else 28
+                if abs(dx) < half and (dx * 3 + row * 7) % 6 == 0:
+                    color = ui.LIGHTS[(dx + row + int(self.t * 3)) % len(ui.LIGHTS)]
+                canvas.set(self.tree_cx + dx, self.gpx - cone + row, color)
+        canvas.rect(self.tree_cx - 1, self.gpx, 3, 2, 94)
+        for dx, dy in ((0, 0), (-1, 0), (1, 0), (0, -1)):
+            canvas.set(self.tree_cx + dx, self.gpx - cone - 1 + dy, 226)
+
+        x, y = self.tree_cx - 6, self.bottom - 20
+        canvas.rect(x, y, 13, 3, 196)
+        for column in range(0, 13, 4):
+            canvas.rect(x + column, y, 2, 3, 255)
+        canvas.rect(x, y + 3, 13, 9, 94)
+        canvas.rect(x + 1, y + 3, 11, 7, 52)
+        canvas.blit(ui.VISITOR, self.tree_cx - 1, y + 4,
                     {'H': 255, 'S': 223, 'C': 33, 'P': 24, 'k': 16})
+        canvas.rect(x, y + 10, 13, 2, 180)
+        canvas.put(x + 1, y // 2 - 1, '마켓 안내소', 226, 22, True)
+        canvas.blit(ui.ELF_SPR, x - 5, y + 4, ui.ELF_PAL)
+        for person in self.queue:
+            px, py = self.qpos(person.d)
+            canvas.blit(ui.VISITOR[:4] + (ui.VISITOR_STEP if person.walking else ui.VISITOR[4:]), px, py, person.pal)
+        if self.queue_offscreen():
+            canvas.put(0, self.guide_front[1] // 2 - 1, '◀ +%d명' % self.queue_offscreen(), 231, 160, True)
 
     # 채팅 명령을 트래픽 실험에 전달
     def command(self, line):

@@ -1,12 +1,12 @@
 {
   "normal": {
     "command": "normal 300 9",
-    "run_id": "run-48c06940568544f9aa3e",
-    "success_representatives": 19,
+    "run_id": "run-3e1402edab4a459f844a",
+    "success_representatives": 15,
     "failure_representatives": 0,
-    "max_simultaneous_departures": 19,
+    "max_simultaneous_departures": 15,
     "footer": "실험 종료 — 완료 300건 / 실패 0건 / 미전송 0건  | 고객 퇴장 연출 중",
-    "changed_output_ratio": 0.543,
+    "changed_output_ratio": 0.595,
     "counts": {
       "planned": 300,
       "sent": 300,
@@ -18,17 +18,17 @@
   },
   "surge": {
     "command": "surge 1000 .5",
-    "run_id": "run-a4322592dc7543e498b1",
-    "success_representatives": 14,
-    "failure_representatives": 5,
-    "max_simultaneous_departures": 17,
-    "footer": "실험 종료 — 완료 315건 / 실패 685건 / 미전송 0건  | 고객 퇴장 연출 중",
-    "changed_output_ratio": 0.535,
+    "run_id": "run-a81cfdb48eec44b1b179",
+    "success_representatives": 10,
+    "failure_representatives": 1,
+    "max_simultaneous_departures": 11,
+    "footer": "실험 종료 — 완료 291건 / 실패 709건 / 미전송 0건  | 고객 퇴장 연출 중",
+    "changed_output_ratio": 0.54,
     "counts": {
       "planned": 1000,
       "sent": 1000,
-      "success": 315,
-      "failed": 685,
+      "success": 291,
+      "failed": 709,
       "pending": 0,
       "dropped": 0
     }

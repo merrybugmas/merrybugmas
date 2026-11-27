@@ -188,8 +188,8 @@ class TrafficFrontendTests(unittest.TestCase):
         session.apply([{'type': 'request.succeeded', 'request_id': 'r1', 'customer_id': 'c1', 'data': {}}])
         world.update(.1)
         person = session.departures['r1']
-        self.assertEqual(session.departure_position(world, person), (world.w + 3, world.gpx + 3))
-        world.update(.5)
+        self.assertEqual(session.departure_position(world, person), (-4, world.guide_front[1]))
+        world.update(.6)
         position = session.departure_position(world, person)
         session.apply([{'type': 'request.succeeded', 'request_id': 'r2', 'customer_id': 'c2', 'data': {}}])
         world.update(0)
@@ -223,7 +223,7 @@ class TrafficFrontendTests(unittest.TestCase):
             session.apply([{'type': 'request.' + kind, 'request_id': 'r1', 'customer_id': 'c1', 'data': {}}])
             world.update(.1)
             canvas = world.draw('traffic')
-            self.assertEqual(canvas.get(world.gate_x + 3, world.bottom - 6), 33)
+            self.assertEqual(canvas.get(world.tree_cx - 1, world.bottom - 14), 33)
 
     # 짧은 요청도 고객 안내 장면을 유지한 뒤 같은 캐릭터로 퇴장
     def test_processing_visual_holds_without_changing_real_status(self):
@@ -244,7 +244,7 @@ class TrafficFrontendTests(unittest.TestCase):
         self.assertNotIn('r1', session.serving)
         self.assertEqual(session.departures['r1']['palette'], person['palette'])
         self.assertEqual(session.departure_position(world, session.departures['r1']),
-                         (world.gate_x - 5, world.bottom - 5))
+                         world.guide_front)
 
     # 성공 고객 퇴장 자리가 가득 차도 실패 고객을 표시
     def test_failure_departures_are_not_hidden_by_successes(self):
@@ -258,7 +258,7 @@ class TrafficFrontendTests(unittest.TestCase):
         self.assertEqual(len(session.pending_departures[False]), 11)
         session.apply([{'type': 'request.failed', 'request_id': 'bad', 'customer_id': 'bad-c',
                         'data': {'error_code': 'QUEUE_FULL'}}])
-        world.update(.1)
+        world.update(.6)
         self.assertIn('bad', session.departures)
         self.assertTrue(session.departures['bad']['failed'])
         self.assertIsInstance(session.departure_position(world, session.departures['bad']), tuple)
@@ -375,7 +375,7 @@ class TrafficFrontendTests(unittest.TestCase):
         session.apply([{'type': 'request.succeeded', 'request_id': f'r-{i}', 'customer_id': f'c-{i}', 'data': {}}
                        for i in range(24)])
         for _ in range(12):
-            world.update(.46)
+            world.update(.61)
         self.assertGreater(len(session.departures), 8)
         self.assertTrue(session.pending_departures[False])
         session.run = snapshot(status='completed')
@@ -469,11 +469,81 @@ class TrafficFrontendTests(unittest.TestCase):
             frame = compose(world, 140, 45)
         guards = [call.args[2:4] for call in blit.call_args_list if call.args[1] == ui.SOLDIER]
         self.assertEqual(guards, [(2, world.gpx - 13), (world.w - 9, world.gpx - 13)])
-        self.assertTrue(all(x + len(name) + 4 <= world.w - 10 for x, name, _ in world.booths))
+        self.assertTrue(all(x >= 11 and x + 9 <= world.w - 10 for x, name, _ in world.booths))
         self.assertIn('마켓 개장 준비', ui.ANSI.sub('', frame[2]))
         self.assertNotIn('마켓 개장 준비', ui.ANSI.sub('', '\n'.join(frame[3:-6])))
         self.assertEqual(world.draw().get(world.w - 9, 6), 230)
         self.assertEqual(world.qpos(world.qvis)[0], -4)
+
+    # 상점은 트리 양쪽에 같은 크기로 대칭 배치하고 안내소는 중앙에 위치
+    def test_market_layout_is_symmetric_at_supported_widths(self):
+        world = TrafficWorld(Session('http://127.0.0.1:8000'))
+        for width in (60, 82, 100, 140, 180):
+            compose(world, width, 45)
+            with self.subTest(width=width):
+                self.assertEqual(len(world.booths) % 2, 0)
+                for left, right in zip(world.booths[::2], world.booths[1::2]):
+                    self.assertEqual(left[0] + right[0] + 9, world.w)
+                self.assertLess(abs(world.guide_front[0] - world.w / 2), 3)
+                for x, _, _ in world.booths:
+                    self.assertTrue(x + 8 < world.tree_cx - 9 or x > world.tree_cx + 9)
+                self.assertLess(world.gpx + 14 + 5, world.bottom - 20)
+                for category in ('cookie', 'hot_choco', 'gift', 'toy', 'ornament'):
+                    target = world.shop_target(category)
+                    self.assertGreaterEqual(target[1] - 2, world.gpx + 2)
+
+    # 완료가 먼저 관측돼도 입장과 안내소 및 요청 상품 상점을 차례로 방문
+    def test_success_route_visits_guide_then_requested_shop(self):
+        session = Session('http://127.0.0.1:8000')
+        world = TrafficWorld(session)
+        compose(world, 140, 45)
+        for category in ('cookie', 'hot_choco', 'gift', 'toy', 'ornament'):
+            person = {'start': (-4, world.guide_front[1]), 'via_guide': True,
+                      'category': category, 'failed': False, 'born': world.t}
+            route = session.departure_route(world, person)
+            target = world.shop_target(category)
+            self.assertEqual(route[0][0], -4)
+            self.assertEqual(route[1], world.guide_front)
+            self.assertIn(target, route[2:])
+            self.assertGreater(route.index(target), route.index(world.guide_front))
+            distance = sum(abs(b[0] - a[0]) + abs(b[1] - a[1]) / 2
+                           for a, b in zip(route[:5], route[1:6]))
+            world.t = person['born'] + distance / 14 + .21
+            self.assertEqual(session.departure_position(world, person), target)
+
+    # 실패한 고객은 상점을 방문하지 않고 화면 안에서 이탈 경로로 이동
+    def test_failed_customer_skips_shop_and_remains_inside_vertical_bounds(self):
+        session = Session('http://127.0.0.1:8000')
+        world = TrafficWorld(session)
+        compose(world, 140, 45)
+        person = {'start': world.guide_front, 'via_guide': False,
+                  'category': 'cookie', 'failed': True, 'born': 0}
+        route = session.departure_route(world, person)
+        self.assertNotIn(world.shop_target('cookie'), route)
+        self.assertTrue(all(world.gpx + 4 <= y <= world.bottom - 5 for _, y in route))
+        self.assertEqual(route[-1][0], -4)
+
+    # 넓은 화면에서 상점 네 개씩을 다섯 칸 간격으로 대칭 배치
+    def test_eight_shops_have_spacing_on_both_sides(self):
+        world = TrafficWorld(Session('http://127.0.0.1:8000'))
+        compose(world, 180, 45)
+        self.assertEqual(len(world.booths), 8)
+        left = sorted(x for x, _, _ in world.booths if x < world.tree_cx)
+        right = sorted(x for x, _, _ in world.booths if x > world.tree_cx)
+        self.assertEqual(len(left), 4)
+        self.assertEqual(len(right), 4)
+        for positions in (left, right):
+            self.assertTrue(all(b - a - 9 == 5 for a, b in zip(positions, positions[1:])))
+        self.assertGreaterEqual(left[0], 11)
+        self.assertLessEqual(right[-1] + 9, world.w - 10)
+
+    # 같은 상품 종류의 상점이 여러 개면 요청별로 방문 상점을 분산
+    def test_repeated_shop_categories_receive_customers(self):
+        world = TrafficWorld(Session('http://127.0.0.1:8000'))
+        compose(world, 180, 45)
+        for category in ('gift', 'toy', 'cookie'):
+            targets = {world.shop_target(category, f'r-{i}') for i in range(10)}
+            self.assertEqual(len(targets), 2)
 
 
 if __name__ == '__main__':

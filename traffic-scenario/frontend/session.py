@@ -57,7 +57,7 @@ class Session:
         self.pending_departures = {False: deque(maxlen=32), True: deque(maxlen=32)}
         self.seen_finished = set()
         self.next_departure_at = 0
-        self.next_failure_at = 0
+        self.last_outcome = True
         self.last_run = None
         self.history_at = 0
         self.guide = False
@@ -275,7 +275,7 @@ class Session:
                 pending.clear()
             self.seen_finished.clear()
             self.next_departure_at = world.t
-            self.next_failure_at = world.t
+            self.last_outcome = True
             world.queue, world.passing, world.hist = [], [], []
             self.last_run = self.run_id
             self.history_at = world.t
@@ -323,23 +323,26 @@ class Session:
                 bad = self.failed(request)
                 visible_waiter = rid in previous and world.qpos(previous[rid].d)[0] >= 0
                 palette = self.customer_palette(rid, ui).copy()
-                start = (world.gate_x - 4, world.bottom - 5)
+                start = world.guide_front
                 if rid in previous_serving:
                     start = self.service_position(world, previous_serving[rid])
                 elif visible_waiter:
                     start = world.qpos(previous[rid].d)
-                person = {'palette': palette, 'failed': bad, 'start': start, 'queue_exit': False}
+                person = {'palette': palette, 'failed': bad, 'start': start,
+                          'category': request.get('query', {}).get('category'), 'request_id': rid,
+                          'via_guide': rid not in previous_serving and not bad}
                 if rid in previous_serving or visible_waiter:
                     person['born'] = world.t
                     self.departures[rid] = person
                 else:
-                    person['start'] = (world.w + 3, world.gpx + (10 if bad else 3))
-                    person['queue_exit'] = True
+                    person['start'] = (-4, world.guide_front[1])
+                    person['via_guide'] = True
                     self.pending_departures[bad].append((rid, person))
             outcome_counts = {bad: sum(self.failed(request_map[rid]) == bad for rid in self.departures if rid in request_map)
                               for bad in (False, True)}
-            for bad, pending in self.pending_departures.items():
-                next_at = self.next_failure_at if bad else self.next_departure_at
+            for bad in sorted(self.pending_departures, key=lambda outcome: outcome == self.last_outcome):
+                pending = self.pending_departures[bad]
+                next_at = self.next_departure_at
                 if not pending or world.t < next_at or outcome_counts[bad] + len(self.serving) >= capacity:
                     continue
                 rid, person = pending.popleft()
@@ -351,10 +354,9 @@ class Session:
                 person['born'] = world.t
                 self.departures[rid] = person
                 outcome_counts[bad] += 1
-                if bad:
-                    self.next_failure_at = world.t + .45
-                else:
-                    self.next_departure_at = world.t + .45
+                self.last_outcome = bad
+                self.next_departure_at = world.t + .6
+                break
             if state['run'] and state['run']['status'] in ('completed', 'stopped', 'failed') and state['run']['telemetry_complete']:
                 for pending in self.pending_departures.values():
                     pending.clear()
@@ -366,12 +368,11 @@ class Session:
                 if self.failed(request) or rid not in previous:
                     continue
                 start_x, _ = world.qpos(previous[rid].d)
-                if start_x < 0 or previous[rid].d > ui.Queuer.GAP * 2 or len(self.serving) >= 4 or any(count + len(self.serving) >= capacity for count in outcome_counts.values()):
+                if start_x < 0 or previous[rid].d > ui.Queuer.GAP * 2 or len(self.serving) >= 1 or any(count + len(self.serving) >= capacity for count in outcome_counts.values()):
                     continue
-                slot = next(i for i in range(4) if i not in {p['slot'] for p in self.serving.values()})
                 self.seen_processing.add(rid)
                 duration = max(.3, previous[rid].d / 20)
-                self.serving[rid] = {'slot': slot, 'until': world.t + duration + .6,
+                self.serving[rid] = {'until': world.t + duration + .6,
                                      'palette': previous[rid].pal.copy(), 'born': world.t,
                                      'duration': duration, 'start_d': previous[rid].d}
             world.queue = [person for person in world.queue if person.request_id not in self.serving]
@@ -418,26 +419,48 @@ class Session:
     def service_position(self, world, person):
         progress = min(1, max(0, (world.t - person['born']) / person['duration']))
         x, y = world.qpos(person['start_d'] * (1 - progress))
-        base_x, base_y = world.qpos(0)
-        goal_x = world.gate_x - 5 - (person['slot'] % 2) * 4
-        goal_y = world.bottom - 5 - (person['slot'] // 2) * 7
-        return x + (goal_x - base_x) * progress, y + (goal_y - base_y) * progress
+        return x, y
 
-    # 현재 위치에서 출구까지 고객별 고정 경로 계산
+    # 성공 고객은 안내소를 거쳐 요청한 상품 상점으로 이동
+    @staticmethod
+    def departure_route(world, person):
+        start = person['start']
+        front = world.guide_front
+        points = [start]
+        if person.get('via_guide'):
+            points.append(front)
+        if person['failed']:
+            exit_y = front[1] - 7
+            detour_x = min(points[-1][0], world.tree_cx - 15)
+            points += [(detour_x, points[-1][1]), (detour_x, exit_y), (-4, exit_y)]
+        else:
+            target_x, target_y = world.shop_target(person.get('category'), person.get('request_id', ''))
+            side = -1 if target_x < world.tree_cx else 1
+            detour_x = world.tree_cx + side * 15
+            points += [(detour_x, points[-1][1]), (detour_x, world.gpx + 14),
+                       (target_x, world.gpx + 14), (target_x, target_y),
+                       (target_x, world.gpx + 14),
+                       (-4 if side < 0 else world.w + 4, world.gpx + 14)]
+        return points
+
+    # 이동 연출 시간과 실제 요청 측정 시간은 분리
     def departure_position(self, world, person):
         age = world.t - person['born']
         if age < 0:
             return None
-        distance = age * 9
-        x, start_y = person.get('start', (world.gate_x - 4, world.bottom - 5))
-        if person.get('queue_exit'):
-            return 'exited' if x - distance < -3 else (x - distance, start_y)
-        exit_y = world.gpx + (10 if person.get('failed') else 3)
-        vertical = abs(start_y - exit_y) / 2
-        if distance < vertical:
-            return x, start_y + distance * 2 * (1 if exit_y > start_y else -1)
-        x -= distance - vertical
-        return 'exited' if x < -3 else (x, exit_y)
+        distance = age * 14
+        points = self.departure_route(world, person)
+        for start, end in zip(points, points[1:]):
+            length = abs(end[0] - start[0]) + abs(end[1] - start[1]) / 2
+            if distance <= length and length:
+                progress = distance / length
+                return start[0] + (end[0] - start[0]) * progress, start[1] + (end[1] - start[1]) * progress
+            distance -= length
+            hold = 2.8 if end == world.guide_front else 4.2 if end == world.shop_target(person.get('category'), person.get('request_id', '')) and not person['failed'] else 0
+            if distance < hold:
+                return end
+            distance -= hold
+        return 'exited'
 
     # 고객이 받은 최종 실패 결과 우선 확인
     @staticmethod
@@ -451,17 +474,17 @@ class Session:
     def panel(self, state):
         snapshot = state['run']
         if not snapshot:
-            return ['버그마스 마켓 안내소', '', '평소 방문 또는 고객 급증을 선택하세요.', '', '머리 위 표시', '… 대기  ? 안내 중', '+ 완료  ! 실패', '옷 색은 고객마다 유지됩니다.']
+            return ['버그마스 마켓 안내소', '', '평소 방문 또는 고객 급증을 선택하세요.', '', '머리 위 표시', '… 대기  ? 안내 중', '+ 완료  ! 실패']
         s, c, m = snapshot['server_counts'], snapshot['client_counts'], snapshot['metrics']
         lines = ['마켓 현황', f"요청 {c['sent']}/{c['planned']}  미전송 {c['dropped']}",
                  f"대기 {s['queued']}  안내 중 {s['processing']}", f"완료 {c['success']}  실패 {c['failed']}",
                  f"평균 {number(m['avg_response_ms'])}", f"p95 {number(m['p95_response_ms'])}",
                  f"실패율 {number(None if m['failure_rate'] is None else m['failure_rate'] * 100, '%')}",
-                 f"처리량 {number(m['success_rps'], '/s')}", '표시: … 대기  ? 안내 중', '      + 완료  ! 실패', '초록 안내원: 개선 상태', '파랑 직원: 안내소 담당', '', '성능 개선 에이전트', state['agent'], '', '선택한 고객']
+                 f"처리량 {number(m['success_rps'], '/s')}", '동선: 입장 → 안내소 → 상점', '표시: … 대기  ? 안내 중', '      + 완료  ! 실패', '초록 안내원: 개선 상태', '파랑 직원: 안내소 담당', '', '성능 개선 에이전트', state['agent'], '', '선택한 고객']
         detail = state['detail']
         if detail:
             query = detail['query']
-            lines += [detail['customer_id'], f"{CATEGORIES[query['category']]} {query['max_price']:,}원 이하",
+            lines += [detail['customer_id'], f"질문: {query['max_price']:,}원 이하 {CATEGORIES[query['category']]} 가게는?",
                       f"서버: {STATES.get(detail['server_status'], '—')}", f"고객: {STATES.get(detail['client_outcome'], '—')}",
                       '대기 ' + number(detail['queue_wait_ms']), '현재 대기 추정 ' + number(detail['current_wait_ms']),
                       '처리 ' + number(detail['processing_ms']), '전체 응답 ' + number(detail['client_elapsed_ms'])]
@@ -560,6 +583,8 @@ class Session:
             world.hits.append((int(x) + 1, int(x) + 3, int(y) // 2 + 4, int(y) // 2 + 7,
                                lambda rid=request['request_id']: self.command('select ' + rid)))
         panel = self.panel(state)
+        if len(world.booths) < 8:
+            panel.insert(1, '상점 8개: 터미널 폭 180열 이상')
         rendered_panel = [part for line in panel for part in ui.wrap_cols(line, max(20, sidebar - 3), 3)]
         for i, line in enumerate(cv.lines()):
             if sidebar:
