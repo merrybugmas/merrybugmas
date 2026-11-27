@@ -3,17 +3,28 @@
 ![MERRY BUGMAS 타이틀](docs/images/intro.gif)
 
 운영 지표를 **크리스마스 마켓 게임**으로 보는 터미널 대시보드.
-트래픽은 상점 앞에 선 손님 줄로, Sentry 미해결 이슈는 쥐로, sentry-bot 에이전트는 쥐를 잡는 호두까기 병정으로 그린다.
+트래픽은 상점 앞에 선 손님 줄로, Sentry 미해결 이슈는 쥐로, sentry-bot 에이전트는 쥐를 잡는 호두까기 병정으로,
+트래픽 대응 에이전트는 줄이 밀리면 레버(캐시·계산대·번호표)를 당기는 엘프 점원으로 그린다.
 화면은 전부 반블록 문자 `▀` 로 그린 픽셀아트다. **기본은 mock 데이터 PoC** 이고, `--live` 로 실제 Sentry 미해결 이슈와 실제 서버의 요청 수(rps)를 읽어 올 수 있다(읽기 전용).
 
 ```bash
 python3 xmas_market.py          # 대시보드 (60x22 이상, 256색, 의존성 없음, API 키 없이도 동작)
 export OPENAI_API_KEY=...       # (선택, .env 에 적어도 됨) 병정이 OpenAI API 로 명령을 해석하고 이슈를 판정한다
 python3 xmas_market.py --replay # 키 없이: 녹화해 둔 실제 AI 트리아지 결과로 재생
-python3 xmas_market.py --live   # (선택) 쥐 = 실제 Sentry 미해결 이슈, 줄 = 실제 서버 rps. .env 설정 필요, 읽기 전용
+python3 xmas_market.py --no-ai  # mock 데이터 + OpenAI 호출 0회 (엘프·병정 모두 규칙/키워드)
+python3 xmas_market.py --live   # (선택) 쥐 = 실제 Sentry 미해결 이슈, 줄 = 실제 서버 rps. .env 설정 필요
 ./run-with-codex.sh             # 왼쪽 Codex 채팅 + 오른쪽 대시보드 (tmux 분할, 없으면 Terminal 창 2개)
 ./run-with-codex.sh auto        # 왼쪽 Codex 자율 운영자: 사람 없이 Codex 가 30초마다 판단해 병정을 지휘
 ```
+
+## 📚 문서 (자세한 내용)
+
+| 문서 | 내용 |
+|---|---|
+| [docs/run-modes.md](docs/run-modes.md) | 실행 모드: mock / live, OpenAI 켬·끔·녹화 재생, 옆 패널 `/merrybugmas mock noai`, 환경변수 |
+| [docs/traffic-agent.md](docs/traffic-agent.md) | 🧝 엘프 — 트래픽 대응 에이전트: 감지·판단·레버·원복, AI 예산, 채팅 명령, `status` 필드, 측정 결과 |
+| [AGENTS.md](AGENTS.md) | 채팅 쪽 AI(Codex·Claude Code)가 대시보드를 읽고 지휘하는 규칙 |
+| [docs/submission-draft.md](docs/submission-draft.md) | 공모 제출 초안 |
 
 ## 왜 만들었나
 장애가 나면 운영자는 Grafana(트래픽)·Sentry(에러)·자동 수정 봇(sentry-bot)의 진행 상황을 각각 다른 화면에서 맞춰 봐야 한다.
@@ -33,6 +44,7 @@ MERRY BUGMAS 는 이 셋을 **한 장면**으로 합친다. 트래픽은 줄, �
 | 트래픽 rps (Grafana 자리) | 상점 앞 대기열. 한산함 → 활기참 → 북적북적 → 인파 경보 |
 | Sentry 미해결 이슈 | 호두까기 인형의 쥐 (머리 위 라벨이 이슈 ID) |
 | sentry-bot 서브 에이전트 | 호두까기 병정 셋 — `1 루돌프` · `2 진저` · `3 호두`. 채팅 명령을 알아듣는다 |
+| 트래픽 대응 에이전트 | 🧝 상점 지붕 위 엘프 점원. 밀리면 캐시·계산대 증설·번호표(승인 후) 레버를 당기고, 풀리면 원복한다 |
 
 ## 게임처럼 진행한다
 
@@ -51,6 +63,12 @@ MERRY BUGMAS 는 이 셋을 **한 장면**으로 합친다. 트래픽은 줄, �
 손님이 오른쪽 `SHOP` 앞에 한 줄로 선다. 맨 앞 손님이 카운터에서 계산하면(동전이 튄다) 가게 안으로 들어간다.
 **rps 가 오르면 줄이 길어진다.** 길면 뱀처럼 접혀 올라가고, 넘치면 왼쪽 화면 밖으로 밀려 `◀ +N명` 이 뜨며 인파 경보.
 위 그림은 12초에 오는 "크리스마스 특가 오픈" 급증으로 줄이 세 줄까지 늘어난 장면이다.
+
+**🧝 엘프가 대응한다.** 줄이 밀리면(5xx·응답 시간·대기 요청) 상점 지붕 위 엘프가 🎁 캐시 → 🧾 계산대 증설 순으로 레버를 당기고,
+10초 뒤 숫자로 효과를 확인한다. 🎫 번호표(넘치는 요청 429)는 사람이 `./market tell 엘프 승인` 해야 켠다. 잠잠해지면 하나씩 원복한다.
+판단은 규칙, OpenAI 가 켜져 있으면 경보마다 첫 판단만 AI 에게 묻는다(실행당 최대 5회). → [docs/traffic-agent.md](docs/traffic-agent.md)
+
+![엘프가 캐시를 켜고 계산대를 늘리는 장면](docs/images/elf.png)
 
 ### 3-2. 🐭 Sentry 버그 — 병정의 쥐 사냥
 ![Sentry: 병정이 쥐를 잡고, 잡은 쥐는 뒤쪽 우리로](docs/images/sentry.png)
@@ -127,7 +145,7 @@ Codex·Claude Code 는 이 폴더에서 `AGENTS.md` 를 읽고, 대시보드와�
 - 채팅이 `./market start WEB sentry`, `./market tell …`, `./market say …`, `./market outbreak 3` 등을 실행하면 `.runtime/cmd` 를 거쳐 바로 반영된다.
 - 사람도 같은 명령을 쓸 수 있다. 목록은 `./market help`. `./market brief` 는 AI 운영 브리핑.
 - Claude Code 옆 패널에 띄울 때는 `python3 xmas_market.py --stream --size 90x40` 이 프레임을 JSON 줄로 내보내고, `.runtime/pane_cmd` 로 키·클릭을 받는다.
-- 그 패널 mod 는 `claude-mod/merrybugmas/` 에 있다. 이 폴더에서 `claude --plugin-dir claude-mod/merrybugmas` 로 열면 패널에 대시보드가 실연동(`--live`)으로 뜨고, 병정이 연 PR 이 클릭 링크로 보인다. `/merrybugmas` 로 다시 시작, `/merrybugmas stop` 으로 끈다
+- 그 패널 mod 는 `claude-mod/merrybugmas/` 에 있다. 이 폴더에서 `claude --plugin-dir claude-mod/merrybugmas` 로 열면 패널에 대시보드가 실연동(`--live`)으로 뜨고, 병정이 연 PR 이 클릭 링크로 보인다. `/merrybugmas` 로 다시 시작, `/merrybugmas mock` 이면 Sentry·트래픽 둘 다 mock, `/merrybugmas mock noai` 면 OpenAI 도 끈다, `/merrybugmas stop` 으로 끈다 ([docs/run-modes.md](docs/run-modes.md))
 
 ## 키
 
@@ -156,21 +174,22 @@ python3 -m unittest discover -s tests -v                             # 스모크
 ```
 
 ## 테스트
-`tests/test_smoke.py` (표준 라이브러리 unittest, 35개, 약 7초):
+`tests/test_smoke.py` 35개 + `tests/test_elf.py` 17개 (표준 라이브러리 unittest, 52개, 약 7초):
 - 6개 서비스 × 3개 화면(18개 조합) + 타이틀·메뉴·기록 창이 오류 없이 그려지는지
 - 키워드 병정 명령 (지목·복귀·보고)
 - AI 병정을 가짜 OpenAI 응답으로: 묘사로 가리킨 쥐 해석, 트리아지가 mock 판정을 바꾸고 MR 로그에 수정 요약이 붙는지, 브리핑, 요청이 strict JSON Schema 인지, **API 실패 시 키워드로 폴백**하는지
 - 경합·이상 응답: 사람이 내린 판정을 늦게 온 AI 판정이 덮지 않는지, AI 판정이 8초 안에 안 오면 mock 판정으로 넘어가는지, 스키마를 벗어난 응답·429 재시도·판이 바뀐 뒤 도착한 결과
 - 녹화·재생: 녹화한 트리아지 결과가 `--replay` 에서 그대로 나오는지
 - Sentry 실연동을 가짜 Sentry 응답으로: 실제 이슈가 중복 없이 쥐가 되는지, 가짜 쥐가 섞이지 않는지, AI 가 실제 제목을 판정하는지, **읽기 실패 시 mock 으로 폴백**하는지
+- 엘프(`tests/test_elf.py`): mock 급증에 캐시 → 계산대 순으로 대응하고 해소·원복하는지, 번호표는 승인 전에 안 켜는지, AI 가 고른 레버를 쓰고 예산을 넘으면 규칙으로 가는지, 실서버 레버를 POST 로 바꾸는지, API 장애면 담당자를 부르는지, 레버 없는 서버에서 켠 척하지 않는지
 - 트래픽 실연동을 가짜 `/metrics` 와 가짜 시계로: 카운터 증가분으로 rps 를 내는지, 서버 재시작·읽기 끊김 처리, 가짜 급증을 섞지 않는지, 5xx 비율·응답 시간·Web Vitals 를 읽고 없는 항목은 비워 두는지
 - 실제 수정을 가짜 OpenAI 패치와 가짜 git/gh 로: 실연동 이슈는 PR 이 되고 같은 이슈로 두 번 열지 않는지, 패치가 안 맞거나 스택이 없으면 사람에게 넘기는지(MR 을 지어내지 않는지), mock 이슈는 연출 MR 그대로인지
 - 병정 질의응답: 질문이 answer 로 해석되고 처리 기록이 함께 넘어가는지
 
 권장 환경: macOS / Linux, 256색 터미널 100x30 이상. macOS · Python 3.9 에서 실행을 확인했고, Linux · Python 3.8 은 문법 호환만 확인했다. Windows 는 WSL 에서 실행한다 (`termios` 사용).
 
-## 실연동 (읽기 전용)
-`--live` 로 띄우면 `.env` 에 설정된 것만 실제 데이터로 바뀐다. 쥐는 **실제 Sentry 프로젝트의 미해결 이슈**(`sentry_live.py`),
+## 실연동
+모드 전체 정리는 [docs/run-modes.md](docs/run-modes.md). `--live` 로 띄우면 (Sentry·트래픽 읽기는 읽기 전용, 엘프의 레버만 데모 서버에 쓴다) `.env` 에 설정된 것만 실제 데이터로 바뀐다. 쥐는 **실제 Sentry 프로젝트의 미해결 이슈**(`sentry_live.py`),
 줄은 **실제 서버가 받는 초당 요청 수**(`traffic_live.py`)다. 둘 다 표준 라이브러리만 쓴다.
 
 ```bash
@@ -194,6 +213,11 @@ python3 xmas_market.py --live --no-ai    # OpenAI 호출 없이 키워드 판정
   - Web Vitals(LCP · CLS · INP · TTFB): 브라우저가 실제로 잰 값을 서버가 모아 낸 p75 (`web_vitals_*`). 권장 기준(LCP 2.5초, CLS 0.1, INP 200ms)을 넘으면 빨갛게
 - Grafana 를 거치지 않는다. Prometheus 가 긁어 가는 것과 같은 엔드포인트를 직접 읽는 방식이다
 - 실연동 중에는 `t`·자동 급증이 가짜 급증을 만들지 않는다. 5초 넘게 못 읽으면 마지막 값을 붙들지 않고 0 rps 로 보인다
+
+### 🧝 엘프의 실제 레버
+`--live` 이고 서버 `/metrics` 에 레버 게이지(`demo_capacity` 등)가 있으면 엘프가 `POST /admin/levers` 로 **실제 서버의 레버**를 바꾼다.
+로컬 demo-web 에서 25 → 110 rps 급증: 그대로면 5xx 16.9% · 응답 994ms → 엘프가 캐시·계산대 4 → 5xx 0.1% · 응답 76ms, 급증이 끝나자 원복 (AI 끄고 규칙으로).
+레버 없는 서버면 바꾼 척하지 않고 알리기만 한다. 자세히: [docs/traffic-agent.md](docs/traffic-agent.md)
 
 **검증 범위 (2026-11-27)**: 테스트용 Sentry 프로젝트와 로컬 데모 서버로 확인했다. 실제 서비스의 이슈·트래픽이 아니다.
 - 데모 웹앱 [merrybugmas/demo-web](https://github.com/merrybugmas/demo-web): 일부러 버그를 심어 둔 상점 페이지. 버튼을 누르면 진짜 브라우저 에러 7종이 Sentry 브라우저 SDK 를 거쳐 이슈가 되고, 대시보드가 그것을 읽어 쥐로 만드는 것까지 확인했다. 같은 서버의 `/metrics` 로 트래픽도 확인했다: 부하 생성기로 25 → 110 → 25 rps 를 주자 대시보드 rps 가 그대로 따라가고 줄이 인파 경보까지 늘었다. 요청의 15% 를 503 API 로 보내자 5xx 비율이 14% 대로 표시됐고, 브라우저가 보고한 LCP·CLS·TTFB 도 표시됐다
