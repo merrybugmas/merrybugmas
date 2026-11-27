@@ -1,7 +1,7 @@
 # 프로젝트 설명서 초안 — OpenAI × 잇츠 스터디 5기
 
 > 양식(.docx)에 옮겨 적은 뒤 PDF로 낸다. `[작성]` 은 직접 채운다. 글자 수는 공백 포함 기준이고, 각 절 끝에 적어 두었다.
-> 그림: `docs/images/architecture.png`(Ⅳ), `sentry.png`·`traffic.png`·`overview.png`·`history.png`(Ⅲ·Ⅴ). 키가 있으면 `python3 tools/screenshots.py --ai-only` 로 `ai.png`(Ⅳ·Ⅴ)도 만든다.
+> 그림: `docs/images/architecture.png`(Ⅳ), `sentry.png`·`traffic.png`·`overview.png`·`history.png`(Ⅲ·Ⅴ), `ai.png`·`ai-history.png`(Ⅳ·Ⅴ, 실제 API 호출로 촬영).
 
 ## Ⅰ. 프로젝트 개요
 
@@ -10,9 +10,9 @@
 | 팀명 | [작성] |
 | 프로젝트명 | MERRY BUGMAS — 운영 지표를 크리스마스 마켓 게임으로 보는 AI 운영 대시보드 |
 | 결과물 형태 | AI Agent / 개발도구 (터미널 운영 대시보드) |
-| 주요 기술 | Python 3 (표준 라이브러리만), 터미널 반블록 픽셀아트 렌더링, 파일 기반 에이전트 브리지(.runtime/cmd · state.json), tmux |
+| 주요 기술 | Python 3 (표준 라이브러리만), 터미널 반블록 픽셀아트 렌더링, 파일 기반 에이전트 브리지(.runtime/cmd · state.json), Sentry API(읽기), tmux |
 | OpenAI 활용기술 | Codex CLI (운영자 에이전트 · `codex exec` 자율 운영), OpenAI API (Responses API + Structured Outputs: 명령 해석 · 이슈 트리아지 · 운영 브리핑) |
-| 결과물 URL | https://github.com/merrybugmas/merrybugmas |
+| 결과물 URL | https://github.com/merrybugmas/merrybugmas (시연용 데모 웹앱: https://github.com/merrybugmas/demo-web) |
 | 시연영상 URL | [작성] |
 
 ## Ⅱ. 문제정의 및 프로젝트 목표
@@ -51,9 +51,10 @@ MERRY BUGMAS 는 세 화면을 하나의 게임 장면으로 합친다. 트래�
 | 병정 명령 (OpenAI API) | "진저한테 503 에러 난 쥐부터 처리하라고 해" → {병정 2, catch, 이슈 ID}. 묘사로 가리킨 쥐도 현황에서 찾음. 잡담엔 병정 말투로 대답 | ■ 완료 (키 없으면 키워드 해석) |
 | AI 트리아지 | 이슈 제목 → fixable / noise / needs-human + 판정 근거 + MR 수정 요약. 작전 로그·기록 창에 표시 | ■ 완료 (키 없으면 mock 판정) |
 | 운영 브리핑 | `./market brief` → 현황 3줄 + 권고 1줄 | ■ 완료 |
-| Codex 운영자 | 채팅으로 현황 질의·지휘 (AGENTS.md 규약), `./run-with-codex.sh auto` 자율 운영 | ■ 완료 |
+| Codex 운영자 | 채팅으로 현황 질의·지휘 (AGENTS.md 규약), `./run-with-codex.sh auto` 자율 운영 스크립트(`codex exec`) | □ 일부 구현 (규약·스크립트 구현. 워크스페이스 지출 한도로 최종 실행 검증은 못함) |
 | 잡은 쥐 기록 · 개요 | 처리 이력(결과·ID·판정·병정·근거), 트래픽·Sentry 카드 | ■ 완료 |
-| Grafana·Sentry 실연동 | MockSource 교체 지점 분리 | □ 일부 구현 |
+| Sentry 실연동 | `--live`: 실제 Sentry 프로젝트의 미해결 이슈를 읽어 쥐로 만들고 AI 가 그 제목을 판정. 읽기 전용, 실패 시 mock 폴백 | ■ 완료 (테스트 프로젝트 + 데모 웹앱으로 검증) |
+| Grafana 실연동 | 트래픽은 mock. `MockSource.rps()` 교체 지점만 분리 | □ 미구현 |
 
 ## Ⅳ. AI 기술 활용 및 적용 방식
 
@@ -81,27 +82,30 @@ MERRY BUGMAS 는 세 화면을 하나의 게임 장면으로 합친다. 트래�
 **○ 프로젝트 구현 결과 및 완성수준**
 
 - **실제 작동 범위**: `python3 xmas_market.py` 하나로 타이틀부터 메뉴, 6개 서비스 × 3개 시나리오 스테이지까지 모두 동작한다. 외부 패키지와 API 키가 필요 없다. `OPENAI_API_KEY` 를 넣으면 AI 병정 모드(명령 해석·트리아지·브리핑)가 켜지고, `./run-with-codex.sh` 로 Codex 채팅과 나란히 띄운다.
-- **테스트·검증**: `tests/test_smoke.py` 21개 테스트가 모두 통과한다(1.5초, 네트워크 없이).
+- **테스트·검증**: `tests/test_smoke.py` 26개 테스트가 모두 통과한다(1.5초, 네트워크 없이).
   - 18개 화면 조합 렌더
   - 키워드 명령
   - 가짜 OpenAI 응답으로 확인하는 명령 해석·트리아지·브리핑
   - API 실패 시 폴백, 사람 판정 우선, 판정 타임아웃, 형식 오류 응답, 429 재시도, 판이 바뀐 뒤 도착한 결과
-  - 구현 뒤 별도 코드 리뷰를 거쳐, 지적된 결함 5건(사람 판정 덮어쓰기·판정 대기 고착·이상 응답 처리 등)을 고치고 회귀 테스트로 고정했다.
-- **AI 트리아지 정확도 평가 (실제 API)**: 정답을 붙인 Sentry 이슈 제목 32건(fixable 14 · noise 10 · needs-human 8)을 `tools/eval_triage.py` 로 gpt-5-mini 에 판정시켰다. 결과는 **정확도 29/32 = 90.6%**, 평균 응답 4.2초, 호출 실패 0건이다(`docs/eval/triage-gpt-5-mini.md`). 사람이 꼭 봐야 하는 needs-human 8건은 모두 맞혔다. 틀린 3건은 브라우저 저장소 차단, JSON 대신 HTML 응답, 출처 불명 Promise 거부처럼 사람도 판단이 갈리는 경계 사례였다. 시연 화면(`docs/images/ai.png`·`ai-history.png`)도 실제 API 호출로 찍었다(13회 호출, 실패 0).
+  - 녹화·재생, 가짜 Sentry 응답으로 확인하는 실연동(중복 방지·가짜 쥐 차단·읽기 실패 시 mock 폴백)
+  - 구현 뒤 [작성: 누가 리뷰했는지 — 사람/AI 도구명] 코드 리뷰를 거쳐, 지적된 결함 5건(사람 판정 덮어쓰기·판정 대기 고착·이상 응답 처리 등)을 고치고 회귀 테스트로 고정했다.
+- **AI 트리아지 정확도 평가 (실제 API)**: 정답을 붙인 Sentry 이슈 제목 32건(fixable 14 · noise 10 · needs-human 8)을 `tools/eval_triage.py` 로 gpt-5-mini 에 판정시켰다. 결과는 **정확도 29/32 = 90.6%**, 평균 응답 4.2초, 호출 실패 0건이다(`docs/eval/triage-gpt-5-mini.md`). 사람이 꼭 봐야 하는 needs-human 8건은 모두 맞혔다. 틀린 3건(브라우저 저장소 차단, JSON 대신 HTML 응답, 출처 불명 Promise 거부) 중 2건은 사람에게 넘기는 보수적 오판이고, 1건(fixable → noise)은 실제 버그를 놓치는 방향이다. 평가셋은 직접 만든 32건(제목만, 1회 실행)이고 프롬프트 예시와 유형이 겹쳐, 실제 이슈에서는 더 낮을 수 있다. 시연 화면(`docs/images/ai.png`·`ai-history.png`)도 실제 API 호출로 찍었다(13회 호출, 실패 0).
+- **Sentry 실연동 검증**: 테스트용 Sentry 프로젝트에 데모 웹앱(merrybugmas/demo-web, 일부러 심은 버그 7종)을 붙였다. 브라우저에서 난 실제 에러가 Sentry 이슈가 되고, 대시보드(`--live`)가 그것을 읽어 쥐로 만드는 것까지 확인했다. 실제 서비스의 이슈로는 검증하지 않았다.
 - **현재 제약사항**:
-  - 트래픽·이슈 데이터는 mock 이다.
+  - 트래픽 데이터는 mock 이다. 이슈는 기본이 mock 이고 `--live` 에서만 실제 Sentry 이슈다(테스트 프로젝트로만 검증).
+  - 트리아지 입력은 이슈 제목뿐이다. 명령 해석·브리핑은 정량 평가를 하지 않았다.
+  - Codex 연동은 규약·스크립트까지 구현했고, 지출 한도로 최종 실행 검증을 못했다.
   - 병정의 fix·review·MR 은 연출이며, 실제 코드 수정 MR 은 만들지 않는다.
-  - macOS·Linux 전용이다(Windows 는 WSL).
-  - Codex 자율 모드는 Codex 사용 한도에 따른다.
+  - macOS · Python 3.9 에서 확인했다. Linux · Python 3.8 은 문법 호환만 확인했다(Windows 는 WSL).
 
 ## Ⅵ. 실용성 및 문제 해결 효과
 
 **○ 주요 활용방안 및 문제 해결 효과**
 
-- **장애 대응 상황판**: 배포 직후 에러가 몰리면 쥐 떼가 나오고, 병정이 자동으로 분류한다. 운영자는 needs-human 우리에 갇힌 쥐만 보면 된다. 확인해야 할 화면이 셋(Grafana·Sentry·봇 로그)에서 하나로 준다(기대 효과).
+- **장애 대응 상황판**: 배포 직후 에러가 몰리면 쥐 떼가 나오고, 병정이 자동으로 분류한다. 운영자는 needs-human 우리에 갇힌 쥐만 보면 된다. 확인해야 할 화면이 셋(Grafana·Sentry·봇 로그)에서 하나로 준다(기대 효과). 평가 32건 기준으로 AI 가 사람에게 올린 것은 10건이라 운영자가 볼 이슈가 약 69% 줄었고, 사람이 봐야 할 8건은 하나도 놓치지 않았다(직접 만든 평가셋 기준).
 - **봇 판단의 투명성**: 모든 판정에 근거 한 줄이 붙고 기록으로 남는다. 잘못된 판정은 채팅 한 줄("WEB-2B1 사람에게")로 바로잡고, 그 결정은 AI 가 다시 덮지 않는다. 자동화를 사람이 감독하는 구조다.
 - **말로 하는 운영**: 명령어를 외우지 않아도 "제일 오래된 쥐부터", "검색 쪽 503 에러 난 거" 같은 표현으로 지시할 수 있다.
-- **실연동 비용이 낮음**: 데이터 소스는 `MockSource.rps()` / `poll_issues()` 두 함수에 모여 있다. Grafana·Sentry API 호출로 바꾸면 실서비스에 붙는다. 트리아지는 이미 실제 LLM 호출이라, 입력을 이슈 제목에서 스택트레이스로 넓히기만 하면 된다.
+- **실연동 비용이 낮음**: Sentry 는 이미 붙였다. `.env` 에 토큰·조직·프로젝트 세 값을 넣고 `--live` 로 띄우면 그 프로젝트의 미해결 이슈가 쥐가 된다(읽기 전용이라 운영 중인 Sentry 에 영향이 없다). 트래픽은 `MockSource.rps()` 한 함수를 Grafana 쿼리로 바꾸는 일이 남았다. 트리아지는 이미 실제 LLM 호출이고, 입력을 이슈 제목에서 스택트레이스로 넓히는 것이 다음 단계다.
 
 ## Ⅶ. 차별성 및 확장 가능성
 
@@ -113,8 +117,8 @@ MERRY BUGMAS 는 세 화면을 하나의 게임 장면으로 합친다. 트래�
 
 **○ 향후 기능 고도화 및 사용자·활용분야 확장 가능 내용**
 
-- Grafana·Sentry 실연동, 병정 하나를 실제 sentry-bot(Codex) 수정 런 하나에 연결해 진짜 MR 생성
-- 트리아지 입력에 스택트레이스·관련 소스 추가, 판정 정확도 측정(사람 판정과 비교)
+- Grafana 트래픽 실연동, 병정 하나를 실제 sentry-bot(Codex) 수정 런 하나에 연결해 진짜 MR 생성
+- 트리아지 입력에 스택트레이스·관련 소스 추가, 실제 Sentry 이슈 수백 건으로 평가 확대
 - Slack 알림, 웹 버전(같은 state.json 을 브라우저에서)
 - 다른 테마·지표: 결제 실패 = 화재, 배포 = 썰매, CI 실패 = 눈사람 붕괴 등. 데이터 파이프라인·고객문의 큐로 확장
 
@@ -122,18 +126,18 @@ MERRY BUGMAS 는 세 화면을 하나의 게임 장면으로 합친다. 트래�
 
 | 항목 | 내용 |
 |---|---|
-| 접속 및 실행방법 | `git clone https://github.com/merrybugmas/merrybugmas && cd merrybugmas && python3 xmas_market.py` |
+| 접속 및 실행방법 | `git clone https://github.com/merrybugmas/merrybugmas && cd merrybugmas && python3 xmas_market.py --replay` (키·로그인 없이, 녹화된 실제 AI 판정으로 재생) |
 | 테스트 계정 | 해당 없음 (로그인 없음) |
 | 주요 확인기능 | 1분 시나리오: 아무 키 → 메뉴에서 WEB · Sentry 버그 · START → `b`(쥐 떼) → 병정 출동·처리 → `r`(잡은 쥐 기록) → `1`(트래픽) → `0`(개요). 다른 터미널에서 `./market tell 진저 보고`, `./market brief`. AI 모드: `export OPENAI_API_KEY=…` 후 실행하면 첫 로그에 "AI 병정 모드" 표시 |
-| 권장 실행환경 | macOS / Linux, Python 3.8+, 256색 터미널 100x30 이상. Windows 는 WSL. Codex 연동은 tmux 권장 |
-| 기타 유의사항 | **API 키 없이 AI 판정 보기**: `python3 xmas_market.py --replay` 로 실행하면, 녹화해 둔 실제 OpenAI 트리아지 결과(판정·근거·수정 요약)로 재생한다. 터미널의 "애매한 폭 문자를 2칸으로" 옵션은 끈다. API 키는 문서에 넣지 않으며, 키 없이도 전 기능이 키워드·mock 으로 동작한다. 테스트: `python3 -m unittest discover -s tests -v` |
+| 권장 실행환경 | macOS / Linux, 256색 터미널 100x30 이상 (macOS · Python 3.9 에서 확인). Windows 는 WSL. Codex 연동은 tmux 권장 |
+| 기타 유의사항 | **API 키 없이 AI 판정 보기**: `python3 xmas_market.py --replay` 로 실행하면, 녹화해 둔 실제 OpenAI 트리아지 결과(판정·근거·수정 요약)로 재생한다. `--replay` 를 빼면 AI 없는 키워드·mock 모드다. **Sentry 실연동**(`--live`)은 본인 Sentry 토큰이 필요해 심사 환경에서는 시연영상으로 확인한다. 터미널의 "애매한 폭 문자를 2칸으로" 옵션은 끈다. API 키는 문서에 넣지 않으며, 키 없이도 전 기능이 키워드·mock 으로 동작한다. 테스트: `python3 -m unittest discover -s tests -v` |
 
 ## Ⅸ. 팀 학습 및 협업 과정
 
 **○ 스터디 과정의 주요 학습·논의 내용 및 프로젝트 구현 연계**
 
 [작성 — 예시 방향]
-- Codex 와 AGENTS.md: 에이전트에게 "도구 목록 + 행동 규칙"을 문서로 주면 행동이 안정된다는 점을 배웠고, 이를 `AGENTS.md`(status 먼저 읽기, 숫자로 답하기, 코드 수정 금지)로 반영했다.
+- Codex 와 AGENTS.md: 에이전트에게 "도구 목록 + 행동 규칙"을 문서로 주는 방식을 학습했고, 이를 `AGENTS.md`(status 먼저 읽기, 숫자로 답하기, 코드 수정 금지)로 반영했다. [실제로 관찰한 내용만 쓴다]
 - Structured Outputs: 자유 텍스트 대신 JSON Schema 로 받아야 게임 동작에 안전하게 연결된다는 논의 → 명령·트리아지·브리핑 모두 strict 스키마로 구현했다.
 - 에이전트 신뢰성: 사람 판단 우선, 타임아웃, 폴백 설계
 

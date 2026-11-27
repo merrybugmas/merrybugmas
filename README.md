@@ -4,12 +4,13 @@
 
 운영 지표를 **크리스마스 마켓 게임**으로 보는 터미널 대시보드.
 트래픽은 상점 앞에 선 손님 줄로, Sentry 미해결 이슈는 쥐로, sentry-bot 에이전트는 쥐를 잡는 호두까기 병정으로 그린다.
-화면은 전부 반블록 문자 `▀` 로 그린 픽셀아트다. **지금은 mock 데이터 PoC.**
+화면은 전부 반블록 문자 `▀` 로 그린 픽셀아트다. **기본은 mock 데이터 PoC** 이고, `--live` 로 Sentry 미해결 이슈를 실제로 읽어 올 수 있다(읽기 전용).
 
 ```bash
 python3 xmas_market.py          # 대시보드 (60x22 이상, 256색, 의존성 없음, API 키 없이도 동작)
 export OPENAI_API_KEY=...       # (선택, .env 에 적어도 됨) 병정이 OpenAI API 로 명령을 해석하고 이슈를 판정한다
 python3 xmas_market.py --replay # 키 없이: 녹화해 둔 실제 AI 트리아지 결과로 재생
+python3 xmas_market.py --live   # (선택) 쥐 = 실제 Sentry 미해결 이슈. .env 에 SENTRY_* 필요, 읽기 전용
 ./run-with-codex.sh             # 왼쪽 Codex 채팅 + 오른쪽 대시보드 (tmux 분할, 없으면 Terminal 창 2개)
 ./run-with-codex.sh auto        # 왼쪽 Codex 자율 운영자: 사람 없이 Codex 가 30초마다 판단해 병정을 지휘
 ```
@@ -22,7 +23,8 @@ MERRY BUGMAS 는 이 셋을 **한 장면**으로 합친다. 트래픽은 줄, �
 병정(에이전트)이 왜 그렇게 판정했는지가 말풍선·기록으로 남는다. 그리고 운영자는 **채팅으로 에이전트를 지휘**한다.
 
 ## 30초 체험 (키·로그인 없이)
-1. `python3 xmas_market.py` → 아무 키 → 메뉴에서 `WEB` · `🐭 Sentry 버그` · `▶ START`
+1. `python3 xmas_market.py --replay` → 아무 키 → 메뉴에서 `WEB` · `🐭 Sentry 버그` · `▶ START`
+   (`--replay` 는 녹화해 둔 실제 AI 판정을 키 없이 보여 준다. 빼면 AI 없는 키워드·mock 모드다)
 2. `b` 를 눌러 쥐 떼(배포 직후 신규 이슈 5건)를 풀면 병정이 출동해 triage → fix → review → MR 로 처리한다
 3. `r` 로 잡은 쥐 기록, `1` 로 트래픽 대기열, `0` 으로 개요. 다른 터미널에서 `./market tell 진저 보고`
 
@@ -111,10 +113,13 @@ MERRY BUGMAS 는 이 셋을 **한 장면**으로 합친다. 트래픽은 줄, �
 
 ### AI 트리아지 평가
 **결과 (gpt-5-mini, 2026-11-27): 정확도 29/32 = 90.6%, 평균 응답 4.2초, 호출 실패 0건** — [전체 결과·혼동 행렬](docs/eval/triage-gpt-5-mini.md).
-needs-human 8건은 모두 맞혔다. 틀린 3건은 경계 사례다: `sessionStorage access denied`(fixable → noise), JSON 자리에 HTML 이 온 파싱 오류(fixable → needs-human, 서버 응답 문제로 봄), `Object Not Found Matching Id`(noise → needs-human).
+needs-human 8건은 모두 맞혔다. 틀린 3건 중 2건은 사람에게 넘기는 보수적 오판이고, 1건(fixable → noise)은 실제 버그를 놓치는 방향이다: `sessionStorage access denied`(fixable → noise), JSON 자리에 HTML 이 온 파싱 오류(fixable → needs-human, 서버 응답 문제로 봄), `Object Not Found Matching Id`(noise → needs-human).
 
 `python3 tools/eval_triage.py --record recordings/ai.jsonl` 은 정답이 달린 Sentry 이슈 제목 32건(`tests/data/triage_eval.jsonl`: fixable 14 · noise 10 · needs-human 8)을 판정한다. 정확도·혼동 행렬·응답 시간을 `docs/eval/` 에 남기고, 같은 결과를 녹화 재생용으로도 쓴다.
-- `AGENTS.md` 는 채팅 에이전트용 운영 규약이다. 어떤 명령이 있고, 답하기 전에 무엇을 읽고, 무엇을 고치면 안 되는지를 적어 두면 Codex 가 그대로 따른다.
+
+**한계**: 평가셋은 직접 만든 32건(제목만, 1회 실행)이고 그중 11건은 데모 카탈로그와 같은 제목이다. 프롬프트의 예시와 유형이 겹치므로 실제 이슈에서는 더 낮을 수 있다. 명령 해석·브리핑은 정량 평가를 하지 않았다.
+
+- `AGENTS.md` 는 채팅 에이전트용 운영 규약이다. 어떤 명령이 있고, 답하기 전에 무엇을 읽고, 무엇을 고치면 안 되는지를 Codex 가 따르도록 적어 두었다.
 
 ## 채팅 ↔ 대시보드
 Codex·Claude Code 는 이 폴더에서 `AGENTS.md` 를 읽고, 대시보드와는 `.runtime/` 파일로 이어진다.
@@ -150,19 +155,37 @@ python3 -m unittest discover -s tests -v                             # 스모크
 ```
 
 ## 테스트
-`tests/test_smoke.py` (표준 라이브러리 unittest, 21개, 1.5초):
+`tests/test_smoke.py` (표준 라이브러리 unittest, 26개, 1.5초):
 - 6개 서비스 × 3개 화면(18개 조합) + 타이틀·메뉴·기록 창이 오류 없이 그려지는지
 - 키워드 병정 명령 (지목·복귀·보고)
 - AI 병정을 가짜 OpenAI 응답으로: 묘사로 가리킨 쥐 해석, 트리아지가 mock 판정을 바꾸고 MR 로그에 수정 요약이 붙는지, 브리핑, 요청이 strict JSON Schema 인지, **API 실패 시 키워드로 폴백**하는지
 - 경합·이상 응답: 사람이 내린 판정을 늦게 온 AI 판정이 덮지 않는지, AI 판정이 8초 안에 안 오면 mock 판정으로 넘어가는지, 스키마를 벗어난 응답·429 재시도·판이 바뀐 뒤 도착한 결과
+- 녹화·재생: 녹화한 트리아지 결과가 `--replay` 에서 그대로 나오는지
+- Sentry 실연동을 가짜 Sentry 응답으로: 실제 이슈가 중복 없이 쥐가 되는지, 가짜 쥐가 섞이지 않는지, AI 가 실제 제목을 판정하는지, **읽기 실패 시 mock 으로 폴백**하는지
 
-권장 환경: macOS / Linux, Python 3.8+, 256색 터미널 100x30 이상. Windows 는 WSL 에서 실행한다 (`termios` 사용).
+권장 환경: macOS / Linux, 256색 터미널 100x30 이상. macOS · Python 3.9 에서 실행을 확인했고, Linux · Python 3.8 은 문법 호환만 확인했다. Windows 는 WSL 에서 실행한다 (`termios` 사용).
 
-## 실연동할 때
-`MockSource` 만 바꾸면 된다.
-- `rps(t)`: Grafana(또는 Prometheus) 쿼리 결과
-- `poll_issues(...)`: Sentry 신규 미해결 이슈. `kind` 는 sentry-bot state 의 triage 결과
-- 트리아지는 이미 OpenAI API 로 한다(`ai.py`). 실연동에서는 이슈 제목 대신 스택트레이스·관련 소스까지 넣는다
+## Sentry 실연동 (읽기 전용)
+`--live` 로 띄우면 쥐가 mock 이 아니라 **실제 Sentry 프로젝트의 미해결 이슈**다 (`sentry_live.py`, 표준 라이브러리만).
+
+```bash
+python3 xmas_market.py --live            # 화면 오른쪽 위 배지가 MOCK → LIVE SENTRY
+python3 xmas_market.py --live --no-ai    # OpenAI 호출 없이 키워드 판정
+```
+
+- `.env`: `SENTRY_AUTH_TOKEN`(권한은 event:read 만) · `SENTRY_ORG` · `SENTRY_PROJECT`. 선택: `SENTRY_URL`(기본 `https://sentry.io`) · `SENTRY_LIMIT`(기본 20) · `SENTRY_POLL`(초, 기본 15)
+- 15초마다 미해결 이슈를 읽어 처음 본 것만 쥐로 만든다. AI 가 켜져 있으면 그 **실제 제목**을 OpenAI API 가 판정한다
+- Sentry 에는 아무것도 쓰지 않는다. 병정의 판정·fix·MR 은 대시보드 안의 연출이고 Sentry 이슈 상태는 그대로다
+- 실연동 중에는 `b`·`n`·자동 쥐 떼가 가짜 쥐를 만들지 않는다. 설정이 없거나 첫 읽기가 실패하면 원인을 로그에 남기고 mock 으로 돈다
+- 트래픽(rps)은 여전히 mock 이다
+
+**검증 범위 (2026-11-27)**: 테스트용 Sentry 프로젝트로 확인했다. 실제 서비스의 이슈가 아니다.
+- 데모 웹앱 [merrybugmas/demo-web](https://github.com/merrybugmas/demo-web): 일부러 버그를 심어 둔 상점 페이지. 버튼을 누르면 진짜 브라우저 에러 7종이 Sentry 브라우저 SDK 를 거쳐 이슈가 되고, 대시보드가 그것을 읽어 쥐로 만드는 것까지 확인했다
+- `python3 tools/sentry_seed.py`: 평가셋 제목으로 테스트 이벤트를 직접 넣는 스크립트(`SENTRY_DSN` 필요). 12건을 보내 11건이 이슈가 됐다
+
+## 더 연동할 때
+- 트래픽: `MockSource.rps(t)` 를 Grafana(또는 Prometheus) 쿼리 결과로 바꾼다 (아직 안 했다)
+- 트리아지 입력을 이슈 제목에서 스택트레이스·관련 소스까지 넓힌다
 - 병정의 fix·review·MR 은 아직 연출이다. 실연동에서는 병정 하나를 sentry-bot(Codex) 런 하나에 붙여 런 로그와 state 로 움직이게 하고 `tell` 명령을 런에 넘긴다
 
 ## 라이선스
