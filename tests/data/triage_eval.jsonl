@@ -1,0 +1,32 @@
+{"service": "WEB", "title": "TypeError: Cannot read properties of undefined (reading 'map')", "kind": "fixable"}
+{"service": "WEB", "title": "RangeError: Invalid time value", "kind": "fixable"}
+{"service": "SEARCH", "title": "Hydration failed: server/client text mismatch", "kind": "fixable"}
+{"service": "RESUME", "title": "TypeError: e.toSorted is not a function", "kind": "fixable"}
+{"service": "DISPLAY", "title": "SecurityError: sessionStorage access denied", "kind": "fixable"}
+{"service": "MOBILE", "title": "TypeError: null is not an object (evaluating 'el.scrollTop')", "kind": "fixable"}
+{"service": "WEB", "title": "ChunkLoadError: Loading chunk 7967 failed", "kind": "noise"}
+{"service": "MOBILE", "title": "Failed to fetch (ad.doubleclick.net)", "kind": "noise"}
+{"service": "WEB", "title": "MetaMask inpage.js: Object.connect failed", "kind": "noise"}
+{"service": "MOBILE", "title": "API Error: 503 /api/member/info", "kind": "needs-human"}
+{"service": "SEARCH", "title": "<obscura:bootstrap> globalThis.fetch override", "kind": "needs-human"}
+{"service": "WEB", "title": "TypeError: Cannot destructure property 'id' of 'user' as it is undefined", "kind": "fixable"}
+{"service": "SEARCH", "title": "ReferenceError: structuredClone is not defined", "kind": "fixable"}
+{"service": "RESUME", "title": "Error: Minified React error #31: Objects are not valid as a React child", "kind": "fixable"}
+{"service": "DISPLAY", "title": "TypeError: Failed to execute 'observe' on 'IntersectionObserver': parameter 1 is not of type 'Element'", "kind": "fixable"}
+{"service": "MOBILE", "title": "Unhandled Promise Rejection: TypeError: undefined is not an object (evaluating 'res.data.items')", "kind": "fixable"}
+{"service": "WEB", "title": "RangeError: Maximum call stack size exceeded (useEffect setState loop)", "kind": "fixable"}
+{"service": "SEARCH", "title": "TypeError: Intl.Segmenter is not a constructor", "kind": "fixable"}
+{"service": "RESUME", "title": "SyntaxError: Unexpected token '<', \"<!DOCTYPE \" is not valid JSON (resume draft parse)", "kind": "fixable"}
+{"service": "WEB", "title": "ResizeObserver loop completed with undelivered notifications.", "kind": "noise"}
+{"service": "WEB", "title": "Script error.", "kind": "noise"}
+{"service": "MOBILE", "title": "Error: Extension context invalidated. (chrome-extension://gighmmpiobklfepjocnamgkkbiglidom)", "kind": "noise"}
+{"service": "DISPLAY", "title": "TypeError: Load failed (googletagmanager.com/gtag/js)", "kind": "noise"}
+{"service": "SEARCH", "title": "TypeError: NetworkError when attempting to fetch resource. (offline)", "kind": "noise"}
+{"service": "WEB", "title": "Error: Non-Error promise rejection captured with value: Object Not Found Matching Id:3", "kind": "noise"}
+{"service": "MOBILE", "title": "TypeError: Cannot redefine property: googletag", "kind": "noise"}
+{"service": "WEB", "title": "API Error: 500 /api/payment/confirm", "kind": "needs-human"}
+{"service": "RESUME", "title": "API Error: 502 Bad Gateway /api/resume/upload", "kind": "needs-human"}
+{"service": "SEARCH", "title": "Content Security Policy violation: script-src 'unsafe-eval' blocked from unknown origin", "kind": "needs-human"}
+{"service": "DISPLAY", "title": "API Error: 401 /api/auth/refresh (token refresh failing for all users)", "kind": "needs-human"}
+{"service": "MOBILE", "title": "API Error: 429 Too Many Requests /api/search/suggest", "kind": "needs-human"}
+{"service": "WEB", "title": "Error: Personal data (resident registration number) found in client log payload", "kind": "needs-human"}
