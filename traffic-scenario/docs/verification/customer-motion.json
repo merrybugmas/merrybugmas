@@ -1,0 +1,55 @@
+{
+  "employee_visible_in_all_frames": true,
+  "max_visible_failure_departures": 7,
+  "max_visible_success_departures": 8,
+  "frames": 44,
+  "run": {
+    "run_id": "run-2c1527a9dc8948f9a77c",
+    "status": "completed",
+    "source_run_id": null,
+    "config": {
+      "scenario_id": "surge",
+      "request_count": 1000,
+      "arrival_duration_s": 0.5,
+      "seed": 42,
+      "client_timeout_ms": 5000
+    },
+    "started_at": "2026-11-27T11:05:00.965Z",
+    "finished_at": "2026-11-27T11:05:09.076Z",
+    "last_seq": 15930,
+    "server_counts": {
+      "received": 613,
+      "queued": 0,
+      "processing": 0,
+      "succeeded": 613,
+      "failed": 0,
+      "cancelled": 0
+    },
+    "client_counts": {
+      "planned": 1000,
+      "sent": 1000,
+      "success": 605,
+      "failed": 395,
+      "pending": 0,
+      "dropped": 0
+    },
+    "metrics": {
+      "avg_response_ms": 3429.4995455306084,
+      "p95_response_ms": 4827.845375053585,
+      "failure_rate": 0.395,
+      "success_rps": 76.13234595235328
+    },
+    "telemetry_complete": true,
+    "agent_phase": "idle",
+    "artifact": {
+      "code_revision": "sha256:8b6372b476fed7ec44175d48adf59d22efa9ccd654249d7e45788fd2a37ee671",
+      "schema_hash": "sha256:cf5528fd6220d1079464d6a651f85244f4e1eb7cfa2f61a99b4d0b659c7dd54b",
+      "dataset_hash": "sha256:f5f46ca110c31c72a0d04f9bb09dc3d24348b70dbadd2b65941d9d574bb157c7",
+      "request_plan_hash": "sha256:4701fb9c4679ebcaacaf6050812391cb4cb01366eac41bb7e98cc27b12a8a7ff",
+      "runtime_config_hash": "sha256:e43182b159a672162b19b106b46bf629d74e3e47da3568514c34ea85e17c8a22",
+      "warmup_policy": "reference-query-warmup-v1"
+    }
+  },
+  "animation_only_delay_seconds": 0.6,
+  "backend_metrics_unchanged": true
+}

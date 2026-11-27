@@ -21,9 +21,76 @@ class TrafficFrontendTests(unittest.TestCase):
     def test_reconnects_saved_run_for_matching_server(self):
         with tempfile.TemporaryDirectory() as folder:
             runtime = Path(folder)
-            (runtime / 'state.json').write_text(json.dumps({'experiment': {'server': 'http://127.0.0.1:8000', 'run_id': 'existing'}}))
+            (runtime / 'state.json').write_text(json.dumps({'experiment': {'server': 'http://127.0.0.1:8000', 'run_id': 'existing', 'run': {'status': 'running'}}}))
             self.assertEqual(saved_run(runtime, 'http://127.0.0.1:8000/'), 'existing')
             self.assertIsNone(saved_run(runtime, 'http://127.0.0.1:9000'))
+
+    # 종료된 실험은 다음 실행에서 자동으로 불러오지 않음
+    def test_finished_saved_run_opens_an_empty_market(self):
+        with tempfile.TemporaryDirectory() as folder:
+            runtime = Path(folder)
+            for status in ('completed', 'stopped', 'failed'):
+                with self.subTest(status=status):
+                    (runtime / 'state.json').write_text(json.dumps({'experiment': {
+                        'server': 'http://127.0.0.1:8000', 'run_id': 'old', 'run': {'status': status}}}))
+                    self.assertIsNone(saved_run(runtime, 'http://127.0.0.1:8000'))
+
+    # 과거 기록을 직접 열어도 읽는 도중과 읽은 뒤에 고객을 재생하지 않음
+    def test_historical_events_do_not_replay_characters(self):
+        events = [{'type': 'request.processing', 'request_id': 'old', 'customer_id': 'old-c', 'data': {}},
+                  {'type': 'request.succeeded', 'request_id': 'old', 'customer_id': 'old-c', 'data': {}}]
+
+        # 기록 조회용 API 응답 제공
+        def api(method, path, body=None):
+            if '/events?' in path:
+                return {'events': events, 'next_after_seq': 2, 'has_more': False}
+            return snapshot('old', 'completed')
+
+        session = Session('http://127.0.0.1:8000', 'old', transport=api)
+        world = TrafficWorld(session)
+        compose(world, 140, 45)
+        session.apply(events)
+        world.update(.1)
+        self.assertFalse(session.serving)
+        self.assertFalse(session.departures)
+        session.poll()
+        world.update(.1)
+        self.assertEqual(session.run['status'], 'completed')
+        self.assertIn('old', session.requests)
+        self.assertFalse(session.serving)
+        self.assertFalse(session.departures)
+
+    # 실행 중 재연결은 현재 대기 고객과 이후 새 이벤트만 연출
+    def test_active_resume_suppresses_only_past_completed_customers(self):
+        events = [{'type': 'request.succeeded', 'request_id': 'past', 'customer_id': 'past-c', 'data': {}},
+                  {'type': 'request.queued', 'request_id': 'waiting', 'customer_id': 'waiting-c', 'data': {}}]
+
+        # 현재 실험과 이전 완료 이벤트를 함께 반환
+        def api(method, path, body=None):
+            if '/events?' in path:
+                return {'events': events, 'next_after_seq': 2, 'has_more': False}
+            return snapshot('active', 'running', queued=1)
+
+        session = Session('http://127.0.0.1:8000', 'active', transport=api)
+        world = TrafficWorld(session)
+        compose(world, 140, 45)
+        session.poll()
+        world.update(.1)
+        self.assertEqual([p.request_id for p in world.queue], ['waiting'])
+        self.assertNotIn('past', session.departures)
+        session.apply([{'type': 'request.succeeded', 'request_id': 'new', 'customer_id': 'new-c', 'data': {}}])
+        world.update(.1)
+        self.assertIn('new', session.departures)
+
+    # 종료된 실험에 중지 API를 보내지 않고 시작 방법 안내
+    def test_stop_on_finished_run_does_not_call_backend(self):
+        api = Mock()
+        session = Session('http://127.0.0.1:8000', transport=api)
+        session.run_id = 'old'
+        session.run = snapshot('old', 'completed')
+        session.execute(['stop'])
+        api.assert_not_called()
+        self.assertIn('진행 중인 실험이 없습니다', session.message)
 
     # 종료된 이전 실험의 시작 허용 여부는 백엔드가 판단
     def test_stopped_run_does_not_block_frontend_start(self):
@@ -146,6 +213,155 @@ class TrafficFrontendTests(unittest.TestCase):
         self.assertNotIn('r1', session.departures)
         world.update(.1)
         self.assertNotIn('r1', session.departures)
+
+    # 직원은 처리 고객이 없어도 안내소에 고정 표시
+    def test_blue_employee_stays_when_request_status_changes(self):
+        session = Session('http://127.0.0.1:8000')
+        world = TrafficWorld(session)
+        compose(world, 140, 45)
+        for kind in ('received', 'processing', 'succeeded'):
+            session.apply([{'type': 'request.' + kind, 'request_id': 'r1', 'customer_id': 'c1', 'data': {}}])
+            world.update(.1)
+            canvas = world.draw('traffic')
+            self.assertEqual(canvas.get(world.gate_x + 3, world.bottom - 6), 33)
+
+    # 짧은 요청도 고객 안내 장면을 유지한 뒤 같은 캐릭터로 퇴장
+    def test_processing_visual_holds_without_changing_real_status(self):
+        session = Session('http://127.0.0.1:8000')
+        world = TrafficWorld(session)
+        compose(world, 140, 45)
+        session.apply([{'type': 'request.queued', 'request_id': 'r1', 'customer_id': 'c1', 'data': {}}])
+        world.update(.6)
+        session.apply([{'type': 'request.processing', 'request_id': 'r1', 'customer_id': 'c1', 'data': {}}])
+        world.update(.1)
+        person = session.serving['r1']
+        session.apply([{'type': 'request.succeeded', 'request_id': 'r1', 'customer_id': 'c1', 'data': {}}])
+        world.update(.1)
+        self.assertIs(session.serving['r1'], person)
+        self.assertEqual(session.requests['r1']['server_status'], 'succeeded')
+        self.assertNotIn('r1', session.departures)
+        world.update(1)
+        self.assertNotIn('r1', session.serving)
+        self.assertEqual(session.departures['r1']['palette'], person['palette'])
+        self.assertEqual(session.departure_position(world, session.departures['r1']),
+                         (world.gate_x - 5, world.bottom - 5))
+
+    # 성공 고객 퇴장 자리가 가득 차도 실패 고객을 표시
+    def test_failure_departures_are_not_hidden_by_successes(self):
+        session = Session('http://127.0.0.1:8000')
+        world = TrafficWorld(session)
+        compose(world, 140, 45)
+        session.apply([{'type': 'request.succeeded', 'request_id': f'ok-{i}', 'customer_id': f'c-{i}', 'data': {}}
+                       for i in range(12)])
+        world.update(.1)
+        self.assertEqual(len(session.departures), 8)
+        session.apply([{'type': 'request.failed', 'request_id': 'bad', 'customer_id': 'bad-c',
+                        'data': {'error_code': 'QUEUE_FULL'}}])
+        world.update(.1)
+        self.assertIn('bad', session.departures)
+        self.assertTrue(session.departures['bad']['failed'])
+        self.assertIsInstance(session.departure_position(world, session.departures['bad']), tuple)
+
+    # 대기 고객은 줄 중간에 생성되지 않고 화면 밖에서 입장
+    def test_waiting_customer_enters_from_offscreen(self):
+        session = Session('http://127.0.0.1:8000')
+        world = TrafficWorld(session)
+        compose(world, 140, 45)
+        session.apply([{'type': 'request.queued', 'request_id': 'r1', 'customer_id': 'c1', 'data': {}}])
+        world.update(0)
+        person = world.queue[0]
+        initial = person.d
+        self.assertGreater(initial, world.qvis)
+        world.update(.3)
+        self.assertGreater(person.d, 0)
+        self.assertLess(person.d, initial)
+        world.update(.3)
+        self.assertAlmostEqual(person.d, 0)
+
+    # 대기 고객이 한꺼번에 들어와도 캐릭터끼리 겹치지 않음
+    def test_arrival_batch_keeps_customer_spacing(self):
+        session = Session('http://127.0.0.1:8000')
+        world = TrafficWorld(session)
+        compose(world, 140, 45)
+        session.apply([{'type': 'request.queued', 'request_id': f'r-{i}', 'customer_id': f'c-{i}', 'data': {}}
+                       for i in range(40)])
+        for _ in range(12):
+            world.update(.1)
+            self.assertTrue(all(b.d - a.d >= ui.Queuer.GAP - .001 for a, b in zip(world.queue, world.queue[1:])))
+
+    # 같은 조회에 완료까지 들어온 요청을 파란 고객으로 재생하지 않음
+    def test_completed_batch_does_not_spawn_blue_customers(self):
+        session = Session('http://127.0.0.1:8000')
+        world = TrafficWorld(session)
+        compose(world, 140, 45)
+        session.apply([{'type': kind, 'request_id': 'fast', 'customer_id': 'c', 'data': {}}
+                       for kind in ('request.processing', 'request.succeeded')])
+        world.update(.1)
+        self.assertFalse(session.serving)
+        self.assertIn('fast', session.departures)
+        world.update(1)
+        self.assertFalse(session.serving)
+        session.apply([
+            {'type': 'request.processing', 'request_id': 'client-done', 'customer_id': 'c2', 'data': {}},
+            {'type': 'client.result', 'request_id': 'client-done', 'customer_id': 'c2',
+             'data': {'outcome': 'success', 'elapsed_ms': 10, 'query': {'category': 'cookie', 'max_price': 20000}}}
+        ])
+        world.update(.1)
+        self.assertFalse(session.serving)
+
+    # 처리 상태만 처음 관측한 요청은 고정 위치에 갑자기 만들지 않음
+    def test_processing_without_visible_queue_does_not_materialize(self):
+        session = Session('http://127.0.0.1:8000')
+        world = TrafficWorld(session)
+        compose(world, 140, 45)
+        session.apply([{'type': 'request.processing', 'request_id': 'r', 'customer_id': 'c', 'data': {}}])
+        world.update(.1)
+        self.assertFalse(session.serving)
+        self.assertEqual(session.requests['r']['server_status'], 'processing')
+
+    # 안내 고객은 퇴장 자리를 확보하고 같은 위치에서 퇴장 시작
+    def test_serving_customer_has_reserved_continuous_exit(self):
+        session = Session('http://127.0.0.1:8000')
+        world = TrafficWorld(session)
+        compose(world, 140, 45)
+        session.apply([{'type': 'request.queued', 'request_id': 'r', 'customer_id': 'c', 'data': {}}])
+        world.update(.6)
+        queue_position = world.qpos(world.queue[0].d)
+        session.apply([{'type': 'request.processing', 'request_id': 'r', 'customer_id': 'c', 'data': {}}])
+        world.update(0)
+        person = session.serving['r']
+        self.assertEqual(session.service_position(world, person), queue_position)
+        session.apply([{'type': 'request.succeeded', 'request_id': f'other-{i}', 'customer_id': f'c-{i}', 'data': {}}
+                       for i in range(12)])
+        world.update(.4)
+        self.assertEqual(len(session.departures), 7)
+        session.apply([{'type': 'request.succeeded', 'request_id': 'r', 'customer_id': 'c', 'data': {}}])
+        world.update(.4)
+        position = session.service_position(world, person)
+        world.update(.2)
+        self.assertNotIn('r', session.serving)
+        self.assertIn('r', session.departures)
+        self.assertEqual(session.departure_position(world, session.departures['r']), position)
+
+    # 대기 중 실패한 고객은 자기 자리에서 같은 모습으로 이탈
+    def test_waiting_failures_leave_from_their_own_positions(self):
+        session = Session('http://127.0.0.1:8000')
+        world = TrafficWorld(session)
+        compose(world, 140, 45)
+        session.apply([{'type': 'request.queued', 'request_id': f'r-{i}', 'customer_id': f'c-{i}', 'data': {}}
+                       for i in range(12)])
+        world.update(.6)
+        positions = {p.request_id: world.qpos(p.d) for p in world.queue}
+        palettes = {p.request_id: p.pal.copy() for p in world.queue}
+        session.apply([{'type': 'request.failed', 'request_id': rid, 'customer_id': rid, 'data': {'error_code': 'QUEUE_TIMEOUT'}}
+                       for rid in positions])
+        world.update(0)
+        self.assertFalse(world.queue)
+        self.assertEqual(len(session.departures), 12)
+        for rid, position in positions.items():
+            self.assertEqual(session.departure_position(world, session.departures[rid]), position)
+            self.assertEqual(session.departures[rid]['palette'], palettes[rid])
+            self.assertTrue(session.departures[rid]['failed'])
 
 
 if __name__ == '__main__':

@@ -33,6 +33,8 @@ class Session:
         self.jobs = queue.Queue()
         self.stopped = threading.Event()
         self.run_id = run_id
+        self.restoring = bool(run_id)
+        self.historical_requests = set()
         self.baseline = None
         self.run = None
         self.requests = {}
@@ -47,9 +49,12 @@ class Session:
         self.lines = []
         self.line_seq = self.drawn_line = 0
         self.characters = {}
+        self.serving = {}
+        self.seen_processing = set()
         self.departures = {}
         self.seen_finished = set()
         self.next_departure_at = 0
+        self.next_failure_at = 0
         self.last_run = None
         self.history_at = 0
         self.guide = False
@@ -157,14 +162,18 @@ class Session:
             with self.lock:
                 self.baseline = (self.baseline or previous) if action == 'replay' else None
                 self.run_id, self.run = value['run_id'], None
+                self.restoring = False
+                self.historical_requests = set()
                 self.requests, self.cursor, self.selected, self.detail = {}, 0, None, None
                 self.comparison = None
                 self.lines = []
                 self.message = '같은 요청 계획으로 재실험합니다.' if action == 'replay' else '실제 상품 검색 부하를 시작합니다.'
                 self.agent = '외부 성능 개선 에이전트의 진행 이벤트를 기다립니다.'
         elif action == 'stop':
-            if not self.run_id:
-                raise ValueError('먼저 실험을 시작하세요.')
+            if not self.run_id or (self.run and self.run['status'] not in ('pending', 'running', 'stopping')):
+                with self.lock:
+                    self.message = '진행 중인 실험이 없습니다. n 또는 t로 새 실험을 시작하세요.'
+                return
             self.transport('POST', f'/api/runs/{self.run_id}/stop')
             with self.lock:
                 self.message = '추가 요청을 중지하고 이미 전송한 요청의 결과를 회수합니다.'
@@ -199,6 +208,8 @@ class Session:
                     else:
                         request.update(data)
                         request['server_status'] = kind.split('.')[1]
+                        if kind == 'request.processing':
+                            request['processing_seen'] = True
                     if kind in ('request.succeeded', 'request.failed', 'request.cancelled', 'client.result'):
                         request.setdefault('finished_mono', time.monotonic())
                     self.requests[rid] = request
@@ -223,6 +234,12 @@ class Session:
                 break
         detail = self.transport('GET', f'/api/runs/{self.run_id}/requests/{self.selected}') if self.selected else None
         with self.lock:
+            if self.restoring:
+                # 첫 조회는 과거 상태 복원이므로 완료 고객의 연출을 다시 실행하지 않음
+                terminal = snapshot['status'] not in ('pending', 'running', 'stopping')
+                self.historical_requests = {rid for rid, request in self.requests.items()
+                                            if terminal or 'finished_mono' in request}
+                self.restoring = False
             self.run = snapshot
             self.baseline = self.baseline or snapshot['source_run_id']
             self.detail = detail
@@ -238,44 +255,98 @@ class Session:
     def update(self, world, dt, ui):
         state = self.status()
         with self.lock:
-            requests = list(self.requests.values())
+            requests = [] if self.restoring else list(self.requests.values())
             logs = list(self.lines)
         if self.last_run != self.run_id:
             self.characters.clear()
+            self.serving.clear()
+            self.seen_processing.clear()
             self.departures.clear()
             self.seen_finished.clear()
             self.next_departure_at = world.t
+            self.next_failure_at = world.t
             world.queue, world.passing, world.hist = [], [], []
             self.last_run = self.run_id
             self.history_at = world.t
-        waiting = [r for r in requests if r.get('server_status') in ('received', 'queued')]
+        waiting = [r for r in requests if r['request_id'] not in self.historical_requests
+                   and r.get('server_status') in ('received', 'queued') and not self.failed(r)]
         previous = self.characters
         world.queue = []
         for i, request in enumerate(waiting):
             rid = request['request_id']
             person = previous.get(rid)
             if person is None:
-                person = ui.Queuer(ui.Queuer.GAP * i + 8)
+                goal = ui.Queuer.GAP * i
+                person = ui.Queuer(max(getattr(world, 'qvis', 0) + 8, goal + 8))
+                person.entry_speed = max(ui.Queuer.SPEED, (person.d - goal) / .6)
                 person.pal['C'] = 214
                 person.request_id = rid
-            person.update(dt, ui.Queuer.GAP * i)
+            goal = ui.Queuer.GAP * i
+            before = person.d
+            if person.d > goal + .05:
+                person.d -= min(person.d - goal, person.entry_speed * dt)
+            if world.queue:
+                person.d = max(person.d, world.queue[-1].d + ui.Queuer.GAP)
+            person.moving = person.d < before - .05
+            if person.moving:
+                person.step += dt
             world.queue.append(person)
         self.characters = {p.request_id: p for p in world.queue}
         if world.w:
+            request_map = {r['request_id']: r for r in requests}
+            previous_serving = self.serving
+            self.serving = {rid: person for rid, person in self.serving.items()
+                            if rid in request_map and not self.failed(request_map[rid]) and (request_map[rid].get('server_status') == 'processing'
+                                                       or world.t < person['until'])}
             self.departures = {rid: person for rid, person in self.departures.items()
                                if self.departure_position(world, person) != 'exited'}
-            for request in requests:
+            # 완료와 실패의 표시 자리를 분리해 실패가 화면에서 빠지지 않도록 처리
+            outcome_counts = {False: 0, True: 0}
+            for rid in self.departures:
+                if rid in request_map:
+                    outcome_counts[self.failed(request_map[rid])] += 1
+            for request in sorted(requests, key=lambda r: r['request_id'] not in previous_serving):
                 rid = request['request_id']
-                if 'finished_mono' not in request or rid in self.seen_finished:
+                if rid in self.historical_requests or 'finished_mono' not in request or rid in self.seen_finished or rid in self.serving:
                     continue
                 self.seen_finished.add(rid)
-                # 혼잡할 때 퇴장 연출은 최대 8명만 표시하고 집계는 실제 전체 요청 사용
-                if len(self.departures) >= 8:
+                # 새 표시는 결과별 8명으로 제한하고 기존 고객은 퇴장까지 유지
+                bad = self.failed(request)
+                visible_waiter = bad and rid in previous and world.qpos(previous[rid].d)[0] >= 0
+                if outcome_counts[bad] + len(self.serving) >= 8 and rid not in previous_serving and not visible_waiter:
                     continue
-                born = max(world.t, self.next_departure_at)
-                self.next_departure_at = born + .45
-                palette = previous[rid].pal.copy() if rid in previous else ui.visitor_pal()
-                self.departures[rid] = {'born': born, 'palette': palette}
+                born = max(world.t, self.next_failure_at if bad else self.next_departure_at)
+                if bad:
+                    self.next_failure_at = born + .45
+                else:
+                    self.next_departure_at = born + .45
+                palette = previous[rid].pal.copy() if rid in previous else previous_serving[rid]['palette'].copy() if rid in previous_serving else ui.visitor_pal()
+                start = (world.gate_x - 4, world.bottom - 5)
+                if rid in previous_serving:
+                    start = self.service_position(world, previous_serving[rid])
+                    born = world.t
+                elif visible_waiter:
+                    start = world.qpos(previous[rid].d)
+                    born = world.t
+                self.departures[rid] = {'born': born, 'palette': palette, 'failed': bad,
+                                        'start': start, 'queue_exit': visible_waiter}
+                outcome_counts[bad] += 1
+            # 실제 대기줄에 보이던 고객만 안내로 이동시키고 퇴장 자리도 미리 확보
+            for request in requests:
+                rid = request['request_id']
+                if rid in self.historical_requests or request.get('server_status') != 'processing' or rid in self.seen_processing or 'finished_mono' in request:
+                    continue
+                self.seen_processing.add(rid)
+                if self.failed(request) or rid not in previous:
+                    continue
+                start_x, _ = world.qpos(previous[rid].d)
+                if start_x < 0 or len(self.serving) >= 4 or any(count + len(self.serving) >= 8 for count in outcome_counts.values()):
+                    continue
+                slot = next(i for i in range(4) if i not in {p['slot'] for p in self.serving.values()})
+                duration = max(.3, previous[rid].d / 20)
+                self.serving[rid] = {'slot': slot, 'until': world.t + duration + .6,
+                                     'palette': previous[rid].pal.copy(), 'born': world.t,
+                                     'duration': duration, 'start_d': previous[rid].d}
         snapshot = state['run']
         world.rps = (snapshot['metrics']['success_rps'] or 0) if snapshot else 0
         world.admitted = snapshot['client_counts']['success'] if snapshot else 0
@@ -290,18 +361,38 @@ class Session:
         for snow in getattr(world, 'snow', []):
             snow[1] = (snow[1] + snow[2] * dt) % max(1, world.gpx)
 
+    # 대기줄에서 안내 위치까지 같은 고객을 연속 이동
+    def service_position(self, world, person):
+        progress = min(1, max(0, (world.t - person['born']) / person['duration']))
+        x, y = world.qpos(person['start_d'] * (1 - progress))
+        base_x, base_y = world.qpos(0)
+        goal_x = world.gate_x - 5 - (person['slot'] % 2) * 4
+        goal_y = world.bottom - 5 - (person['slot'] // 2) * 7
+        return x + (goal_x - base_x) * progress, y + (goal_y - base_y) * progress
+
     # 안내소에서 출구까지 고객별 고정 경로 계산
     def departure_position(self, world, person):
         age = world.t - person['born']
         if age < 0:
             return None
         distance = age * 9
-        x, start_y, exit_y = world.gate_x - 4, world.bottom - 5, world.gpx + 3
-        vertical = max(0, (start_y - exit_y) / 2)
+        x, start_y = person.get('start', (world.gate_x - 4, world.bottom - 5))
+        if person.get('queue_exit'):
+            return 'exited' if x - distance < -3 else (x - distance, start_y)
+        exit_y = world.gpx + (10 if person.get('failed') else 3)
+        vertical = abs(start_y - exit_y) / 2
         if distance < vertical:
-            return x, start_y - distance * 2
+            return x, start_y + distance * 2 * (1 if exit_y > start_y else -1)
         x -= distance - vertical
         return 'exited' if x < -3 else (x, exit_y)
+
+    # 고객이 받은 최종 실패 결과 우선 확인
+    @staticmethod
+    def failed(request):
+        outcome = request.get('client_outcome')
+        if outcome is not None:
+            return outcome != 'success'
+        return request.get('server_status') in ('failed', 'cancelled')
 
     # 선택 고객과 비교 결과를 기존 텍스트 형식으로 변환
     def panel(self, state):
@@ -398,19 +489,18 @@ class Session:
                                    lambda rid=person.request_id: self.command('select ' + rid)))
         with self.lock:
             request_map = dict(self.requests)
-        requests = list(request_map.values())
-        active = [r for r in requests if r.get('server_status') == 'processing']
-        people = [(r, world.gate_x + (i % 2) * 3, world.bottom - 5, True, None)
-                  for i, r in enumerate(active[:4]) if r['request_id'] not in self.departures]
+        people = [(request_map[rid], *self.service_position(world, person), True, person)
+                  for rid, person in self.serving.items() if rid in request_map]
         for rid, person in self.departures.items():
             position = self.departure_position(world, person)
             if isinstance(position, tuple) and rid in request_map:
                 people.append((request_map[rid], *position, False, person))
         for request, x, y, processing, person in people:
-            bad = request.get('client_outcome') not in (None, 'success') or request.get('server_status') in ('failed', 'cancelled')
+            bad = self.failed(request)
             palette = person['palette'].copy() if person else {'H': 255, 'S': 223, 'P': 24, 'k': 16}
             palette['C'] = 33 if processing else 196 if bad else 46
-            walking = person and int((world.t - person['born']) * 6) % 2
+            moving = person and (not processing or world.t < person['born'] + person['duration'])
+            walking = moving and int((world.t - person['born']) * 6) % 2
             sprite = ui.VISITOR[:4] + (ui.VISITOR_STEP if walking else ui.VISITOR[4:])
             cv.blit(sprite, x, y, palette)
             world.hits.append((int(x) + 1, int(x) + 3, int(y) // 2 + 4, int(y) // 2 + 7,

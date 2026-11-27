@@ -36,6 +36,10 @@ class TrafficWorld(ui.World):
     def draw_market(self, canvas, top):
         super().draw_market(canvas, top)
         canvas.put(self.gate_x - 1, (self.bottom - 16) // 2, ' 안내소 ', 226, 22, True)
+        # 직원은 요청 상태와 관계없이 안내소 안에 고정 표시
+        canvas.rect(self.gate_x + 2, self.bottom - 8, 5, 6, 52)
+        canvas.blit(ui.VISITOR, self.gate_x + 3, self.bottom - 8,
+                    {'H': 255, 'S': 223, 'C': 33, 'P': 24, 'k': 16})
 
     # 채팅 명령을 트래픽 실험에 전달
     def command(self, line):
@@ -222,10 +226,13 @@ def run_stream(world, runtime, width, height):
         time.sleep(max(0, 1 / 8 - (time.monotonic() - now)))
 
 
-# 같은 서버의 마지막 실험에 다시 연결
+# 같은 서버에서 진행 중인 실험에만 다시 연결
 def saved_run(runtime, server):
     try:
         value = json.loads((runtime / 'state.json').read_text()).get('experiment') or {}
+        run = value.get('run') or {}
+        if run.get('status') not in ('pending', 'running', 'stopping'):
+            return None
         return value.get('run_id') if value.get('server') == server.rstrip('/') else None
     except (OSError, ValueError, AttributeError):
         return None

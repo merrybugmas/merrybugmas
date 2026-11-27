@@ -108,5 +108,13 @@
   "motion_regression_tests_passed": 2,
   "pending_fixes": [],
   "startup_recovery_tests_passed": 47,
-  "startup_recovery_evidence": "docs/verification/startup-recovery.json"
+  "startup_recovery_evidence": "docs/verification/startup-recovery.json",
+  "customer_motion_tests_passed": 52,
+  "customer_motion_evidence": "docs/verification/customer-motion.json",
+  "history_restore_tests_passed": 56,
+  "finished_saved_run_opens_empty_market": true,
+  "old_request_events_not_reanimated": true,
+  "blue_customer_continuity_tests_passed": 60,
+  "instant_completed_requests_do_not_spawn_blue_customers": true,
+  "visible_waiting_failures_leave_from_current_position": true
 }
