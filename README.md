@@ -127,6 +127,7 @@ Codex·Claude Code 는 이 폴더에서 `AGENTS.md` 를 읽고, 대시보드와�
 - 채팅이 `./market start WEB sentry`, `./market tell …`, `./market say …`, `./market outbreak 3` 등을 실행하면 `.runtime/cmd` 를 거쳐 바로 반영된다.
 - 사람도 같은 명령을 쓸 수 있다. 목록은 `./market help`. `./market brief` 는 AI 운영 브리핑.
 - Claude Code 옆 패널에 띄울 때는 `python3 xmas_market.py --stream --size 90x40` 이 프레임을 JSON 줄로 내보내고, `.runtime/pane_cmd` 로 키·클릭을 받는다.
+- 그 패널 mod 는 `claude-mod/merrybugmas/` 에 있다. 이 폴더에서 `claude --plugin-dir claude-mod/merrybugmas` 로 열면 패널에 대시보드가 실연동(`--live`)으로 뜨고, 병정이 연 PR 이 클릭 링크로 보인다. `/merrybugmas` 로 다시 시작, `/merrybugmas stop` 으로 끈다
 
 ## 키
 
