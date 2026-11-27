@@ -9,12 +9,13 @@
 OPENAI_API_KEY 가 없거나 호출이 실패하면 대시보드는 예전 키워드·mock 판정으로 그대로 돈다.
 표준 라이브러리만 쓴다 (의존성 없음).
 
-환경변수
+환경변수 (레포의 .env 에 적어도 된다 — git 에 안 올라감)
   OPENAI_API_KEY     필수 (없으면 AI 꺼짐)
   XMAS_AI=off        키가 있어도 끄기
   XMAS_AI_MODEL      모델 (기본 gpt-5-mini)
   XMAS_AI_EFFORT     reasoning effort (기본 low, 빈 값이면 보내지 않음)
   OPENAI_BASE_URL    API 주소 (기본 https://api.openai.com/v1)
+  XMAS_AI_RECORD     경로를 주면 실제 트리아지 결과를 녹화 (python3 xmas_market.py --replay 로 재생)
 """
 import json
 import os
@@ -97,6 +98,25 @@ advice: 운영자가 지금 하면 좋을 일 한 줄 (45자 이내). 병정 명
 """
 
 
+def load_dotenv(path=None):
+    """레포의 .env (KEY=VALUE 줄)를 환경변수로 읽는다. 이미 있는 환경변수는 덮지 않는다. .env 는 git 에 안 올라간다."""
+    path = path or os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                k = k.replace("export ", "").strip()
+                os.environ.setdefault(k, v.strip().strip("'\""))
+    except OSError:
+        pass
+
+
+load_dotenv()
+
+
 def available():
     """키가 있고 XMAS_AI=off 가 아니면 True."""
     if os.environ.get("XMAS_AI", "on").strip().lower() in ("off", "0", "false", "no"):
@@ -167,12 +187,23 @@ class Brain:
             kind, payload, ctx = self.jobs.get()
             try:
                 res = getattr(self, kind)(payload)
+                self._record(kind, payload, res)
                 self.results.put((kind, ctx, res, None))
             except Exception as e:  # noqa: BLE001 — 어떤 실패든 대시보드는 계속 돈다
                 with self.lock:
                     self.fails += 1
                 self.last_error = "%s: %s" % (type(e).__name__, str(e)[:120])
                 self.results.put((kind, ctx, None, e))
+
+    def _record(self, kind, payload, res):
+        """XMAS_AI_RECORD=경로 이면 트리아지 결과를 녹화한다 (--replay 로 키 없이 다시 보여 주기)."""
+        path = os.environ.get("XMAS_AI_RECORD", "").strip()
+        if not path or kind != "triage":
+            return
+        line = json.dumps({"kind": kind, "key": payload["title"], "model": self.model,
+                           "at": time.strftime("%Y-%m-%d"), "result": res}, ensure_ascii=False)
+        with self.lock, open(path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
 
     # ---- 작업 종류
     def order(self, p):
@@ -233,3 +264,47 @@ class Brain:
             headers={"Authorization": "Bearer " + self.key, "Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=self.timeout) as r:
             return json.loads(r.read().decode("utf-8"))
+
+
+class ReplayBrain:
+    """녹화된 실제 OpenAI 트리아지 결과를 다시 보여 준다 (API 키 없이 심사·시연용).
+
+    같은 이슈 제목이면 녹화된 판정·근거·수정 요약을 그대로 쓴다. 녹화에 없는 이슈와 명령 해석·브리핑은
+    실패로 돌려 대시보드가 키워드·mock 으로 처리하게 한다. 새로 지어내는 응답은 없다.
+    """
+    replay = True
+
+    def __init__(self, path):
+        self.table, models, dates = {}, set(), set()
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                r = json.loads(line)
+                if r.get("kind") == "triage":
+                    self.table[r["key"]] = r["result"]
+                    models.add(r.get("model", "?"))
+                    dates.add(r.get("at", "?"))
+        if not self.table:
+            raise ValueError("녹화에 트리아지 결과가 없다: %s" % path)
+        self.model = "녹화 재생: %s, %s" % ("/".join(sorted(models)), max(dates))
+        self.calls = self.fails = 0
+        self.last_error = None
+        self.results = queue.Queue()
+
+    def submit(self, kind, payload, ctx=None):
+        res = self.table.get(payload.get("title")) if kind == "triage" else None
+        if res is None:
+            self.fails += 1
+            self.results.put((kind, ctx, None, LookupError("녹화에 없음")))
+        else:
+            self.calls += 1
+            self.results.put((kind, ctx, dict(res), None))
+
+    def poll(self):
+        out = []
+        while True:
+            try:
+                out.append(self.results.get_nowait())
+            except queue.Empty:
+                return out

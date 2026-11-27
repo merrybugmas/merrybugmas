@@ -281,5 +281,37 @@ class AiEdgeCaseTest(unittest.TestCase):
         self.assertEqual(len(calls), 2)
 
 
+class ReplayTest(unittest.TestCase):
+    def test_record_then_replay(self):
+        import tempfile
+        d = tempfile.mkdtemp()
+        rec = os.path.join(d, "ai.jsonl")
+        os.environ["XMAS_AI_RECORD"] = rec
+        try:
+            fake = FakeOpenAI({"sentry_triage": {"kind": "noise", "reason": "광고 스크립트", "fix": ""}})
+            w = new_world()
+            w.ai = ai.Brain(key="t", model="m", transport=fake)
+            w.spawn_mouse({"id": "WEB-R1", "title": "Failed to fetch (ad.doubleclick.net)", "kind": "fixable",
+                           "review_block": False})
+            m = w.mice[-1]
+            self.assertTrue(wait_ai(w, lambda: m.issue.get("ai") == "done"))
+        finally:
+            os.environ.pop("XMAS_AI_RECORD", None)
+        w = new_world()
+        xm.attach_ai(w, True, rec)
+        self.assertTrue(getattr(w.ai, "replay", False))
+        w.spawn_mouse({"id": "WEB-R2", "title": "Failed to fetch (ad.doubleclick.net)", "kind": "fixable",
+                       "review_block": False})
+        w.spawn_mouse({"id": "WEB-R3", "title": "녹화에 없는 이슈", "kind": "fixable", "review_block": False})
+        w.update(1.0 / xm.FPS)
+        a, b = w.mice[-2].issue, w.mice[-1].issue
+        self.assertEqual((a["kind"], a["note"], a["ai"]), ("noise", "광고 스크립트", "done"))
+        self.assertEqual((b["kind"], b["ai"]), ("fixable", "failed"))  # 지어내지 않는다
+        w.command("tell 1 복귀")  # 명령은 키워드로
+        self.assertTrue(w.soldiers[0].off)
+        w.command("brief")
+        self.assertTrue(any("브리핑:" in l[1] for l in w.logs))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -711,7 +711,7 @@ class World:
 
     def order(self, text, who=None):
         """자연어 명령 한 줄. AI 가 켜져 있으면 OpenAI 로 해석하고(키워드에 없는 말도), 아니면 키워드로 알아듣는다."""
-        if self.ai is not None and who is None:
+        if self.ai is not None and who is None and not getattr(self.ai, "replay", False):
             self.log("📣 명령: %s  (🧠 해석 중…)" % text.strip()[:50], 229, "all")
             self.ai.submit("order", {"text": text, "context": self.ai_context()}, (self.stage_gen, text))
             return
@@ -1021,7 +1021,7 @@ class World:
                 self.log("🧠 권고: " + res["advice"], 213, "all")
 
     def brief(self):
-        if self.ai is None:
+        if self.ai is None or getattr(self.ai, "replay", False):
             st = self.snapshot_state()
             live = [m for m in st["mice"]]
             self.log("📋 브리핑: rps %s (%s) · 미해결 쥐 %d · MR %d · 사람 대기 %d  (AI 꺼짐: OPENAI_API_KEY)" % (
@@ -2098,8 +2098,18 @@ def handle_input(world, buf, state):
     return ""
 
 
-def attach_ai(world, use_ai=True):
-    """OPENAI_API_KEY 가 있으면 병정에게 두뇌(OpenAI API)를 붙인다."""
+REPLAY_DEFAULT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "recordings", "ai.jsonl")
+
+
+def attach_ai(world, use_ai=True, replay=None):
+    """OPENAI_API_KEY 가 있으면 병정에게 두뇌(OpenAI API)를 붙인다. replay 면 녹화된 실제 응답을 재생한다."""
+    if use_ai and replay and ai is not None:
+        try:
+            world.ai = ai.ReplayBrain(replay)
+            world.log("🧠 AI 녹화 재생 (%s) - 트리아지만 녹화본, 명령은 키워드" % world.ai.model, 141, "all")
+            return
+        except (OSError, ValueError) as e:
+            world.log("녹화 재생 실패 (%s) - 키워드 모드" % type(e).__name__, 245, "all")
     if use_ai and ai is not None and ai.available():
         world.ai = ai.Brain()
         world.log("🧠 AI 병정 모드 (%s) - 명령 해석·트리아지·브리핑" % world.ai.model, 141, "all")
@@ -2107,7 +2117,7 @@ def attach_ai(world, use_ai=True):
         world.log("키워드 모드 - OPENAI_API_KEY 를 설정하면 AI 병정이 된다", 245, "all")
 
 
-def run_interactive(skip_intro=False, use_ai=True):
+def run_interactive(skip_intro=False, use_ai=True, replay=None):
     import termios
     import tty
 
@@ -2115,7 +2125,7 @@ def run_interactive(skip_intro=False, use_ai=True):
     old = termios.tcgetattr(fd)
     out = sys.stdout
     world = World()
-    attach_ai(world, use_ai)
+    attach_ai(world, use_ai, replay)
     if skip_intro:
         world.set_view("menu")
     state = {"quit": False, "paused": False}
@@ -2230,7 +2240,7 @@ def frame_blocks(lines):
     return blocks
 
 
-def run_stream(w, h, skip_intro=False, use_ai=True):
+def run_stream(w, h, skip_intro=False, use_ai=True, replay=None):
     """옆 패널(Claude Code mod)용: 화면 없이 돌며 프레임을 한 줄 JSON 으로 stdout 에 쓴다.
 
     입력은 .runtime/pane_cmd (한 줄에 '번호<TAB>명령', 번호가 커진 것만 처리):
@@ -2241,7 +2251,7 @@ def run_stream(w, h, skip_intro=False, use_ai=True):
     """
     import json
     world = World()
-    attach_ai(world, use_ai)
+    attach_ai(world, use_ai, replay)
     if skip_intro:
         world.set_view("menu")
     state = {"quit": False, "paused": False}
@@ -2324,12 +2334,14 @@ def main():
     ap.add_argument("--skip-intro", action="store_true", help="타이틀 없이 메뉴부터")
     ap.add_argument("--stream", action="store_true", help="옆 패널용: 프레임을 JSON 줄로 stdout 에 (크기는 --size)")
     ap.add_argument("--no-ai", action="store_true", help="OPENAI_API_KEY 가 있어도 AI 병정을 끈다 (키워드·mock 판정)")
+    ap.add_argument("--replay", nargs="?", const=REPLAY_DEFAULT, metavar="JSONL",
+                    help="API 키 없이 녹화된 실제 AI 트리아지 결과를 재생 (기본 recordings/ai.jsonl)")
     args = ap.parse_args()
     if args.seed is not None:
         R.seed(args.seed)
     if args.stream:
         w, h = (int(v) for v in args.size.lower().split("x"))
-        run_stream(w, h, args.skip_intro, not args.no_ai)
+        run_stream(w, h, args.skip_intro, not args.no_ai, args.replay)
         return
     if args.snapshot is not None:
         w, h = (int(v) for v in args.size.lower().split("x"))
@@ -2349,7 +2361,7 @@ def main():
         return
     if not sys.stdin.isatty():
         sys.exit("터미널(TTY)에서 실행하세요. 미리보기는 --snapshot 옵션을 쓰세요.")
-    run_interactive(args.skip_intro, not args.no_ai)
+    run_interactive(args.skip_intro, not args.no_ai, args.replay)
 
 
 if __name__ == "__main__":
