@@ -2597,7 +2597,7 @@ def run_stream(w, h, skip_intro=False, use_ai=True, replay=None, live=False):
                 sys.stdout.flush()
             except (BrokenPipeError, OSError):
                 return
-        time.sleep(max(0.0, 1.0 / 15 - (time.time() - now)))  # 패널은 초당 15장 (그리기는 프레임당 3ms 안팎)
+        time.sleep(max(0.0, 1.0 / 8 - (time.time() - now)))  # 패널은 초당 8장 (더 자주 보내면 채팅 화면까지 버벅인다)
 
 
 def main():
