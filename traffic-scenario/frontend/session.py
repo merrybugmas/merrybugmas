@@ -50,6 +50,7 @@ class Session:
         self.lines = []
         self.line_seq = self.drawn_line = 0
         self.characters = {}
+        self.palettes = {}
         self.serving = {}
         self.seen_processing = set()
         self.departures = {}
@@ -266,6 +267,7 @@ class Session:
             logs = list(self.lines)
         if self.last_run != self.run_id:
             self.characters.clear()
+            self.palettes.clear()
             self.serving.clear()
             self.seen_processing.clear()
             self.departures.clear()
@@ -277,9 +279,11 @@ class Session:
             world.queue, world.passing, world.hist = [], [], []
             self.last_run = self.run_id
             self.history_at = world.t
-        waiting = [r for r in requests if r['request_id'] not in self.historical_requests
-                   and r.get('server_status') in ('received', 'queued') and not self.failed(r)]
         previous = self.characters
+        waiting = [r for r in requests if r['request_id'] not in self.historical_requests
+                   and (r.get('server_status') in ('received', 'queued')
+                        or (r.get('server_status') == 'processing' and r['request_id'] in previous))
+                   and r['request_id'] not in self.serving and not self.failed(r)]
         world.queue = []
         for i, request in enumerate(waiting):
             rid = request['request_id']
@@ -288,7 +292,7 @@ class Session:
                 goal = ui.Queuer.GAP * i
                 person = ui.Queuer(max(getattr(world, 'qvis', 0) + 8, goal + 8))
                 person.entry_speed = max(ui.Queuer.SPEED, (person.d - goal) / .6)
-                person.pal['C'] = 214
+                person.pal = self.customer_palette(rid, ui).copy()
                 person.request_id = rid
             goal = ui.Queuer.GAP * i
             before = person.d
@@ -317,8 +321,8 @@ class Session:
                     continue
                 self.seen_finished.add(rid)
                 bad = self.failed(request)
-                visible_waiter = bad and rid in previous and world.qpos(previous[rid].d)[0] >= 0
-                palette = previous[rid].pal.copy() if rid in previous else previous_serving[rid]['palette'].copy() if rid in previous_serving else ui.visitor_pal()
+                visible_waiter = rid in previous and world.qpos(previous[rid].d)[0] >= 0
+                palette = self.customer_palette(rid, ui).copy()
                 start = (world.gate_x - 4, world.bottom - 5)
                 if rid in previous_serving:
                     start = self.service_position(world, previous_serving[rid])
@@ -355,19 +359,21 @@ class Session:
             # 실제 대기줄에 보이던 고객만 안내로 이동시키고 퇴장 자리도 미리 확보
             for request in requests:
                 rid = request['request_id']
-                if rid in self.historical_requests or request.get('server_status') != 'processing' or rid in self.seen_processing or 'finished_mono' in request:
+                if rid in self.historical_requests or request.get('server_status') != 'processing' or rid in self.seen_processing or rid in self.serving or 'finished_mono' in request:
                     continue
-                self.seen_processing.add(rid)
                 if self.failed(request) or rid not in previous:
                     continue
                 start_x, _ = world.qpos(previous[rid].d)
-                if start_x < 0 or len(self.serving) >= 4 or any(count + len(self.serving) >= capacity for count in outcome_counts.values()):
+                if start_x < 0 or previous[rid].d > ui.Queuer.GAP * 2 or len(self.serving) >= 4 or any(count + len(self.serving) >= capacity for count in outcome_counts.values()):
                     continue
                 slot = next(i for i in range(4) if i not in {p['slot'] for p in self.serving.values()})
+                self.seen_processing.add(rid)
                 duration = max(.3, previous[rid].d / 20)
                 self.serving[rid] = {'slot': slot, 'until': world.t + duration + .6,
                                      'palette': previous[rid].pal.copy(), 'born': world.t,
                                      'duration': duration, 'start_d': previous[rid].d}
+            world.queue = [person for person in world.queue if person.request_id not in self.serving]
+            self.characters = {person.request_id: person for person in world.queue}
         snapshot = state['run']
         world.rps = (snapshot['metrics']['success_rps'] or 0) if snapshot else 0
         world.admitted = snapshot['client_counts']['success'] if snapshot else 0
@@ -381,6 +387,23 @@ class Session:
                 self.drawn_line = seq
         for snow in getattr(world, 'snow', []):
             snow[1] = (snow[1] + snow[2] * dt) % max(1, world.gpx)
+
+    # 고객의 옷과 모자 색은 상태가 바뀌어도 유지
+    def customer_palette(self, request_id, ui):
+        if request_id not in self.palettes:
+            self.palettes[request_id] = ui.visitor_pal()
+        return self.palettes[request_id]
+
+    # 실제 요청 상태를 옷 대신 머리 위 표시로 표현
+    @staticmethod
+    def customer_mark(request):
+        if Session.failed(request):
+            return '!', 196
+        if request.get('client_outcome') == 'success' or request.get('server_status') == 'succeeded':
+            return '+', 46
+        if request.get('server_status') == 'processing':
+            return '?', 33
+        return '…', 214
 
     # 화면의 출구 경로 길이에 맞춰 연속 퇴장 인원 확보
     @staticmethod
@@ -426,13 +449,13 @@ class Session:
     def panel(self, state):
         snapshot = state['run']
         if not snapshot:
-            return ['버그마스 마켓 안내소', '', '평소 방문 또는 고객 급증을 선택하세요.', '', '노랑: 대기', '파랑: 처리 중', '초록: 완료', '빨강: 실패']
+            return ['버그마스 마켓 안내소', '', '평소 방문 또는 고객 급증을 선택하세요.', '', '머리 위 표시', '… 대기  ? 안내 중', '+ 완료  ! 실패', '옷 색은 고객마다 유지됩니다.']
         s, c, m = snapshot['server_counts'], snapshot['client_counts'], snapshot['metrics']
         lines = ['마켓 현황', f"요청 {c['sent']}/{c['planned']}  미전송 {c['dropped']}",
                  f"대기 {s['queued']}  안내 중 {s['processing']}", f"완료 {c['success']}  실패 {c['failed']}",
                  f"평균 {number(m['avg_response_ms'])}", f"p95 {number(m['p95_response_ms'])}",
                  f"실패율 {number(None if m['failure_rate'] is None else m['failure_rate'] * 100, '%')}",
-                 f"처리량 {number(m['success_rps'], '/s')}", '', '성능 개선 에이전트', state['agent'], '', '선택한 고객']
+                 f"처리량 {number(m['success_rps'], '/s')}", '표시: … 대기  ? 안내 중', '      + 완료  ! 실패', '', '성능 개선 에이전트', state['agent'], '', '선택한 고객']
         detail = state['detail']
         if detail:
             query = detail['query']
@@ -510,13 +533,15 @@ class Session:
         cv.put(max(0, scene_width - ui.dw(message) - 1), max(0, (world.bottom - 23) // 2), message, 16, 230, True)
         for x, y in ((2, world.gpx - 13), (max(3, scene_width - 20), world.gpx + 2)):
             cv.blit(ui.SOLDIER, x, y, ui.SOLDIER_PAL)
+        with self.lock:
+            request_map = dict(self.requests)
         for person in world.queue:
             x, y = world.qpos(person.d)
             if x >= 0:
+                mark, color = self.customer_mark(request_map.get(person.request_id, {}))
+                cv.put(int(x) + 1, max(0, int(y) // 2 - 1), mark, color)
                 world.hits.append((int(x) + 1, int(x) + 3, int(y) // 2 + 4, int(y) // 2 + 7,
                                    lambda rid=person.request_id: self.command('select ' + rid)))
-        with self.lock:
-            request_map = dict(self.requests)
         people = [(request_map[rid], *self.service_position(world, person), True, person)
                   for rid, person in self.serving.items() if rid in request_map]
         for rid, person in self.departures.items():
@@ -524,13 +549,13 @@ class Session:
             if isinstance(position, tuple) and rid in request_map:
                 people.append((request_map[rid], *position, False, person))
         for request, x, y, processing, person in people:
-            bad = self.failed(request)
-            palette = person['palette'].copy() if person else {'H': 255, 'S': 223, 'P': 24, 'k': 16}
-            palette['C'] = 33 if processing else 196 if bad else 46
+            palette = person['palette']
             moving = person and (not processing or world.t < person['born'] + person['duration'])
             walking = moving and int((world.t - person['born']) * 6) % 2
             sprite = ui.VISITOR[:4] + (ui.VISITOR_STEP if walking else ui.VISITOR[4:])
             cv.blit(sprite, x, y, palette)
+            mark, color = self.customer_mark(request)
+            cv.put(int(x) + 1, max(0, int(y) // 2 - 1), mark, color)
             world.hits.append((int(x) + 1, int(x) + 3, int(y) // 2 + 4, int(y) // 2 + 7,
                                lambda rid=request['request_id']: self.command('select ' + rid)))
         panel = self.panel(state)
@@ -541,7 +566,7 @@ class Session:
                 line += right
             frame.append(line)
         if not sidebar:
-            detail = panel[12:] if state['detail'] else panel[:info_height]
+            detail = panel[panel.index('선택한 고객'):] if state['detail'] else panel[:info_height]
             for line in detail[:info_height]:
                 frame.append(ui.seg_line([('  ' + line, 230)], width, 234))
             while len(frame) < 3 + scene_height + info_height:

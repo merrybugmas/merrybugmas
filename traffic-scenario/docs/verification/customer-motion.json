@@ -1,10 +1,10 @@
 {
   "employee_visible_in_all_frames": true,
-  "max_visible_failure_departures": 7,
-  "max_visible_success_departures": 8,
+  "max_visible_failure_departures": 2,
+  "max_visible_success_departures": 74,
   "frames": 44,
   "run": {
-    "run_id": "run-2c1527a9dc8948f9a77c",
+    "run_id": "run-d3728f6fd73b402fa9c7",
     "status": "completed",
     "source_run_id": null,
     "config": {
@@ -14,30 +14,30 @@
       "seed": 42,
       "client_timeout_ms": 5000
     },
-    "started_at": "2026-11-27T11:05:00.965Z",
-    "finished_at": "2026-11-27T11:05:09.076Z",
-    "last_seq": 15930,
+    "started_at": "2026-11-27T11:26:04.623Z",
+    "finished_at": "2026-11-27T11:26:12.192Z",
+    "last_seq": 20144,
     "server_counts": {
-      "received": 613,
+      "received": 401,
       "queued": 0,
       "processing": 0,
-      "succeeded": 613,
+      "succeeded": 401,
       "failed": 0,
       "cancelled": 0
     },
     "client_counts": {
       "planned": 1000,
       "sent": 1000,
-      "success": 605,
-      "failed": 395,
+      "success": 392,
+      "failed": 608,
       "pending": 0,
       "dropped": 0
     },
     "metrics": {
-      "avg_response_ms": 3429.4995455306084,
-      "p95_response_ms": 4827.845375053585,
-      "failure_rate": 0.395,
-      "success_rps": 76.13234595235328
+      "avg_response_ms": 2553.8763475654246,
+      "p95_response_ms": 4295.128167024814,
+      "failure_rate": 0.608,
+      "success_rps": 54.39637353785169
     },
     "telemetry_complete": true,
     "agent_phase": "idle",

@@ -119,5 +119,9 @@
   "visible_waiting_failures_leave_from_current_position": true,
   "continuous_customer_flow_tests_passed": 63,
   "terminal_changed_rows_only": true,
-  "terminal_completion_footer": true
+  "terminal_completion_footer": true,
+  "customer_identity_tests_passed": 65,
+  "customer_palette_preserved_across_states": true,
+  "actual_state_shown_above_customer": true,
+  "distant_processing_customer_stays_in_place": true
 }

@@ -416,6 +416,49 @@ class TrafficFrontendTests(unittest.TestCase):
         self.assertTrue(output.startswith('\x1b[?2026h'))
         self.assertTrue(output.endswith('\x1b[?2026l'))
 
+    # 같은 고객은 대기와 안내 및 퇴장 중에도 같은 옷과 모자 유지
+    def test_customer_identity_and_marks_follow_actual_status(self):
+        session = Session('http://127.0.0.1:8000')
+        world = TrafficWorld(session)
+        compose(world, 140, 45)
+        session.apply([{'type': 'request.queued', 'request_id': 'r1', 'customer_id': 'c1', 'data': {}}])
+        world.update(.6)
+        palette = world.queue[0].pal.copy()
+        self.assertEqual(session.customer_mark(session.requests['r1']), ('…', 214))
+        session.apply([{'type': 'request.processing', 'request_id': 'r1', 'customer_id': 'c1', 'data': {}}])
+        world.update(.1)
+        self.assertFalse(world.queue)
+        self.assertEqual(session.serving['r1']['palette'], palette)
+        self.assertEqual(session.customer_mark(session.requests['r1']), ('?', 33))
+        session.apply([{'type': 'request.succeeded', 'request_id': 'r1', 'customer_id': 'c1', 'data': {}}])
+        world.update(.1)
+        self.assertEqual(session.customer_mark(session.requests['r1']), ('+', 46))
+        self.assertEqual(session.serving['r1']['palette'], palette)
+        world.update(1)
+        self.assertEqual(session.departures['r1']['palette'], palette)
+
+    # 줄 뒤쪽에서 끝난 요청은 안내소로 순간 이동하거나 오래 걷지 않음
+    def test_distant_processing_customer_exits_from_current_position(self):
+        session = Session('http://127.0.0.1:8000')
+        world = TrafficWorld(session)
+        compose(world, 140, 45)
+        session.apply([{'type': 'request.queued', 'request_id': f'r{i}', 'customer_id': f'c{i}', 'data': {}}
+                       for i in range(12)])
+        world.update(.6)
+        person = session.characters['r11']
+        palette = person.pal.copy()
+        session.apply([{'type': 'request.processing', 'request_id': 'r11', 'customer_id': 'c11', 'data': {}}])
+        world.update(.1)
+        self.assertNotIn('r11', session.serving)
+        self.assertIs(session.characters['r11'], person)
+        position = world.qpos(person.d)
+        session.apply([{'type': 'request.succeeded', 'request_id': 'r11', 'customer_id': 'c11', 'data': {}}])
+        world.update(.1)
+        self.assertNotIn('r11', session.characters)
+        self.assertNotIn('r11', session.serving)
+        self.assertEqual(session.departures['r11']['palette'], palette)
+        self.assertEqual(session.departure_position(world, session.departures['r11']), position)
+
 
 if __name__ == '__main__':
     unittest.main()
