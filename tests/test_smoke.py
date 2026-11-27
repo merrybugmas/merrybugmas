@@ -358,6 +358,70 @@ class LiveSentryTest(unittest.TestCase):
         self.assertTrue(any("mock 으로 진행" in t for _, t, _, _ in w.logs))
 
 
+class LiveTrafficTest(unittest.TestCase):
+    """--live 트래픽: 가짜 /metrics 와 가짜 시계로 (네트워크 안 씀)."""
+
+    def feed(self):
+        import traffic_live
+        self.now, self.total, self.fail = [100.0], [0], [False]
+
+        def transport(url):
+            if self.fail[0]:
+                raise OSError("down")
+            return ('# TYPE http_requests_total counter\n'
+                    'http_requests_total{path="/a"} %d\nhttp_requests_total{path="/b"} 0\nother_total 999\n' % self.total[0])
+        f = traffic_live.TrafficFeed(transport=transport, interval=3600, clock=lambda: self.now[0])
+        f.url, f.metric, f.peak = "http://test/metrics", "http_requests_total", 100.0
+        return f
+
+    def tick(self, f, requests, sec=1.0):
+        self.total[0] += requests
+        self.now[0] += sec
+        return f.sample()
+
+    def test_rps_from_counter_delta(self):
+        f = self.feed()
+        f.sample()
+        self.assertEqual(f.rps(), 0.0)  # 한 번만 읽어서는 속도를 모른다
+        self.assertAlmostEqual(self.tick(f, 50), 50.0)
+        self.assertAlmostEqual(self.tick(f, 150, 2.0), 62.5)  # (50 + 75) / 2 로 부드럽게
+        self.total[0] = 5  # 서버 재시작: 카운터가 줄면 그 구간은 건너뛴다
+        self.now[0] += 1
+        self.assertAlmostEqual(f.sample(), 62.5)
+        self.now[0] += 10  # 오래 못 읽으면 마지막 값을 붙들지 않는다
+        self.assertEqual(f.rps(), 0.0)
+
+    def test_dashboard_uses_real_rps_and_no_fake_spike(self):
+        f = self.feed()
+        xm.R.seed(7)
+        w = xm.World()
+        w.auto = False
+        self.assertTrue(xm.attach_traffic(w, f))
+        w.start_stage(w.find_service("WEB"), "traffic")
+        xm.compose(w, 100, 30)
+        self.tick(f, 80)
+        step(w, 1)
+        self.assertAlmostEqual(w.rps, 80.0)
+        self.assertEqual(w.peak, 100.0)  # 서비스 배율(WEB 0.55)을 곱하지 않는다
+        w.traffic_spike()
+        self.assertEqual(w.src.spikes, [])
+        self.assertEqual(w.snapshot_state()["live"]["traffic"], "metrics")
+        self.assertIn("LIVE TRAFFIC", "\n".join(xm.ANSI.sub("", l) for l in xm.compose(w, 100, 30)))
+
+    def test_failure_falls_back_to_mock_traffic(self):
+        f = self.feed()
+        self.fail[0] = True
+        xm.R.seed(7)
+        w = xm.World()
+        self.assertFalse(xm.attach_traffic(w, f))
+        self.assertIsNone(w.traffic)
+        w.start_stage(w.find_service("WEB"), "traffic")
+        xm.compose(w, 100, 30)
+        step(w, 1)
+        self.assertGreater(w.rps, 0)  # mock 트래픽
+        self.assertTrue(any("mock 으로 진행" in t for _, t, _, _ in w.logs))
+
+
 class ReplayTest(unittest.TestCase):
     def test_record_then_replay(self):
         import tempfile

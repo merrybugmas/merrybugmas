@@ -4,13 +4,13 @@
 
 운영 지표를 **크리스마스 마켓 게임**으로 보는 터미널 대시보드.
 트래픽은 상점 앞에 선 손님 줄로, Sentry 미해결 이슈는 쥐로, sentry-bot 에이전트는 쥐를 잡는 호두까기 병정으로 그린다.
-화면은 전부 반블록 문자 `▀` 로 그린 픽셀아트다. **기본은 mock 데이터 PoC** 이고, `--live` 로 Sentry 미해결 이슈를 실제로 읽어 올 수 있다(읽기 전용).
+화면은 전부 반블록 문자 `▀` 로 그린 픽셀아트다. **기본은 mock 데이터 PoC** 이고, `--live` 로 실제 Sentry 미해결 이슈와 실제 서버의 요청 수(rps)를 읽어 올 수 있다(읽기 전용).
 
 ```bash
 python3 xmas_market.py          # 대시보드 (60x22 이상, 256색, 의존성 없음, API 키 없이도 동작)
 export OPENAI_API_KEY=...       # (선택, .env 에 적어도 됨) 병정이 OpenAI API 로 명령을 해석하고 이슈를 판정한다
 python3 xmas_market.py --replay # 키 없이: 녹화해 둔 실제 AI 트리아지 결과로 재생
-python3 xmas_market.py --live   # (선택) 쥐 = 실제 Sentry 미해결 이슈. .env 에 SENTRY_* 필요, 읽기 전용
+python3 xmas_market.py --live   # (선택) 쥐 = 실제 Sentry 미해결 이슈, 줄 = 실제 서버 rps. .env 설정 필요, 읽기 전용
 ./run-with-codex.sh             # 왼쪽 Codex 채팅 + 오른쪽 대시보드 (tmux 분할, 없으면 Terminal 창 2개)
 ./run-with-codex.sh auto        # 왼쪽 Codex 자율 운영자: 사람 없이 Codex 가 30초마다 판단해 병정을 지휘
 ```
@@ -155,36 +155,45 @@ python3 -m unittest discover -s tests -v                             # 스모크
 ```
 
 ## 테스트
-`tests/test_smoke.py` (표준 라이브러리 unittest, 26개, 1.5초):
+`tests/test_smoke.py` (표준 라이브러리 unittest, 29개, 1.5초):
 - 6개 서비스 × 3개 화면(18개 조합) + 타이틀·메뉴·기록 창이 오류 없이 그려지는지
 - 키워드 병정 명령 (지목·복귀·보고)
 - AI 병정을 가짜 OpenAI 응답으로: 묘사로 가리킨 쥐 해석, 트리아지가 mock 판정을 바꾸고 MR 로그에 수정 요약이 붙는지, 브리핑, 요청이 strict JSON Schema 인지, **API 실패 시 키워드로 폴백**하는지
 - 경합·이상 응답: 사람이 내린 판정을 늦게 온 AI 판정이 덮지 않는지, AI 판정이 8초 안에 안 오면 mock 판정으로 넘어가는지, 스키마를 벗어난 응답·429 재시도·판이 바뀐 뒤 도착한 결과
 - 녹화·재생: 녹화한 트리아지 결과가 `--replay` 에서 그대로 나오는지
 - Sentry 실연동을 가짜 Sentry 응답으로: 실제 이슈가 중복 없이 쥐가 되는지, 가짜 쥐가 섞이지 않는지, AI 가 실제 제목을 판정하는지, **읽기 실패 시 mock 으로 폴백**하는지
+- 트래픽 실연동을 가짜 `/metrics` 와 가짜 시계로: 카운터 증가분으로 rps 를 내는지, 서버 재시작·읽기 끊김 처리, 가짜 급증을 섞지 않는지
 
 권장 환경: macOS / Linux, 256색 터미널 100x30 이상. macOS · Python 3.9 에서 실행을 확인했고, Linux · Python 3.8 은 문법 호환만 확인했다. Windows 는 WSL 에서 실행한다 (`termios` 사용).
 
-## Sentry 실연동 (읽기 전용)
-`--live` 로 띄우면 쥐가 mock 이 아니라 **실제 Sentry 프로젝트의 미해결 이슈**다 (`sentry_live.py`, 표준 라이브러리만).
+## 실연동 (읽기 전용)
+`--live` 로 띄우면 `.env` 에 설정된 것만 실제 데이터로 바뀐다. 쥐는 **실제 Sentry 프로젝트의 미해결 이슈**(`sentry_live.py`),
+줄은 **실제 서버가 받는 초당 요청 수**(`traffic_live.py`)다. 둘 다 표준 라이브러리만 쓴다.
 
 ```bash
-python3 xmas_market.py --live            # 화면 오른쪽 위 배지가 MOCK → LIVE SENTRY
+python3 xmas_market.py --live            # 화면 오른쪽 위 배지가 MOCK → LIVE SENTRY+TRAFFIC
 python3 xmas_market.py --live --no-ai    # OpenAI 호출 없이 키워드 판정
 ```
+
+### Sentry 이슈
 
 - `.env`: `SENTRY_AUTH_TOKEN`(권한은 event:read 만) · `SENTRY_ORG` · `SENTRY_PROJECT`. 선택: `SENTRY_URL`(기본 `https://sentry.io`) · `SENTRY_LIMIT`(기본 20) · `SENTRY_POLL`(초, 기본 15)
 - 15초마다 미해결 이슈를 읽어 처음 본 것만 쥐로 만든다. AI 가 켜져 있으면 그 **실제 제목**을 OpenAI API 가 판정한다
 - Sentry 에는 아무것도 쓰지 않는다. 병정의 판정·fix·MR 은 대시보드 안의 연출이고 Sentry 이슈 상태는 그대로다
 - 실연동 중에는 `b`·`n`·자동 쥐 떼가 가짜 쥐를 만들지 않는다. 설정이 없거나 첫 읽기가 실패하면 원인을 로그에 남기고 mock 으로 돈다
-- 트래픽(rps)은 여전히 mock 이다
 
-**검증 범위 (2026-11-27)**: 테스트용 Sentry 프로젝트로 확인했다. 실제 서비스의 이슈가 아니다.
-- 데모 웹앱 [merrybugmas/demo-web](https://github.com/merrybugmas/demo-web): 일부러 버그를 심어 둔 상점 페이지. 버튼을 누르면 진짜 브라우저 에러 7종이 Sentry 브라우저 SDK 를 거쳐 이슈가 되고, 대시보드가 그것을 읽어 쥐로 만드는 것까지 확인했다
+### 트래픽
+- `.env`: `TRAFFIC_METRICS_URL`(예: `http://localhost:8765/metrics`). 선택: `TRAFFIC_METRIC`(기본 `http_requests_total`) · `TRAFFIC_PEAK`(최고치로 볼 rps, 기본 100) · `TRAFFIC_POLL`(초, 기본 1)
+- 서버의 Prometheus 형식 `/metrics` 를 1초마다 읽어, 요청 수 카운터의 증가분 ÷ 지난 시간으로 rps 를 낸다. 줄 길이·인파 경보는 rps ÷ `TRAFFIC_PEAK` 로 정한다
+- Grafana 를 거치지 않는다. Prometheus 가 긁어 가는 것과 같은 엔드포인트를 직접 읽는 방식이다
+- 실연동 중에는 `t`·자동 급증이 가짜 급증을 만들지 않는다. 5초 넘게 못 읽으면 마지막 값을 붙들지 않고 0 rps 로 보인다
+
+**검증 범위 (2026-11-27)**: 테스트용 Sentry 프로젝트와 로컬 데모 서버로 확인했다. 실제 서비스의 이슈·트래픽이 아니다.
+- 데모 웹앱 [merrybugmas/demo-web](https://github.com/merrybugmas/demo-web): 일부러 버그를 심어 둔 상점 페이지. 버튼을 누르면 진짜 브라우저 에러 7종이 Sentry 브라우저 SDK 를 거쳐 이슈가 되고, 대시보드가 그것을 읽어 쥐로 만드는 것까지 확인했다. 같은 서버의 `/metrics` 로 트래픽도 확인했다: 부하 생성기로 25 → 110 → 25 rps 를 주자 대시보드 rps 가 그대로 따라가고 줄이 인파 경보까지 늘었다
 - `python3 tools/sentry_seed.py`: 평가셋 제목으로 테스트 이벤트를 직접 넣는 스크립트(`SENTRY_DSN` 필요). 12건을 보내 11건이 이슈가 됐다
 
 ## 더 연동할 때
-- 트래픽: `MockSource.rps(t)` 를 Grafana(또는 Prometheus) 쿼리 결과로 바꾼다 (아직 안 했다)
+- 트래픽: 지금은 서버 한 대의 `/metrics` 를 직접 읽는다. 여러 서버를 합치려면 Grafana(또는 Prometheus) 쿼리 결과를 읽게 바꾼다 (아직 안 했다)
 - 트리아지 입력을 이슈 제목에서 스택트레이스·관련 소스까지 넓힌다
 - 병정의 fix·review·MR 은 아직 연출이다. 실연동에서는 병정 하나를 sentry-bot(Codex) 런 하나에 붙여 런 로그와 state 로 움직이게 하고 `tell` 명령을 런에 넘긴다
 

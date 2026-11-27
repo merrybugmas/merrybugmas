@@ -10,6 +10,7 @@
   `soldiers`(병정 번호·이름·상태·추적 중인 이슈·off 복귀 명령·handled 처리 건수), `history`(잡은 쥐 기록), `stats`(MR 수·noise·human·block), `log`(최근 로그)
 - 쥐 상태: `roam` 돌아다님 / `held` 병정에게 잡힘 / `caged` needs-human 대기 / `flee` noise로 쫓겨남
 - `live.on` 이 true 면 쥐는 mock 이 아니라 실제 Sentry 미해결 이슈다 (`--live`, 읽기 전용). 이때 `outbreak`·`mouse` 는 가짜 쥐를 만들지 않는다
+- `live.traffic` 이 `metrics` 면 `traffic.rps` 는 실제 서버의 초당 요청 수다. 이때 `spike` 는 가짜 급증을 만들지 않는다
 - 병정 상태: `home` 대기 / `walk` 출동 / `triage` → `fix` → `review` → MR / `shoo` noise / `flag` 사람 호출
 
 ## 병정 = sentry-bot 서브 에이전트 (지금은 시뮬레이션)

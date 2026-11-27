@@ -33,6 +33,10 @@ try:
     import sentry_live  # Sentry 실연동 (읽기 전용, --live)
 except ImportError:  # pragma: no cover
     sentry_live = None
+try:
+    import traffic_live  # 트래픽 실연동 (/metrics 읽기, --live)
+except ImportError:  # pragma: no cover
+    traffic_live = None
 
 FPS = 12
 PEAK_RPS = 3000
@@ -624,6 +628,8 @@ class World:
         self.stage_gen = 0  # 판이 바뀌면 +1. 이전 판에 보낸 AI 결과는 버린다
         self.ai = None  # ai.Brain: 있으면 병정 명령 해석·트리아지·브리핑을 OpenAI API 로 한다
         self.live = None  # sentry_live.SentryFeed: 있으면 쥐는 실제 Sentry 미해결 이슈다 (트래픽은 mock)
+        self.traffic = None  # traffic_live.TrafficFeed: 있으면 rps 는 실제 서버 /metrics 에서 읽은 값이다
+        self.traffic_down = False
         self.live_fail = None  # --live 를 켰는데 못 붙은 이유 (스테이지 시작 로그에 다시 보여 준다)
         self.live_wait, self.live_acc = [], 0.0  # 아직 화면에 안 나온 실제 이슈 · 다음 등장까지 남은 시간
         self.fired = set()
@@ -659,6 +665,8 @@ class World:
         self.svc_i = svc_i
         if svc is not self.service:
             self.service, self.peak = svc, PEAK_RPS * svc[3]
+            if self.traffic is not None:
+                self.peak = self.traffic.peak  # 실제 트래픽은 서비스 배율 없이 그대로
             self.mice, self.queue, self.passing, self.particles = [], [], [], []
             self.soldiers = [Soldier(i, self) for i in range(3)]
             self.stage_gen += 1
@@ -670,14 +678,23 @@ class World:
             if self.live is not None:
                 self.live.reset()
                 self.live_wait = []
-                self.log("STAGE %s %s 시작! (쥐 = Sentry %s/%s 실제 미해결 이슈, 트래픽은 mock)" % (
-                    svc[0], svc[1], self.live.org, self.live.project), 220, "all")
-            else:
-                self.log("STAGE %s %s 시작! (mock 데이터)" % (svc[0], svc[1]), 220, "all")
-                if self.live_fail:
-                    self.log("Sentry 실연동 실패 (%s) - mock 으로 진행" % self.live_fail, 203, "all")
+            self.log("STAGE %s %s 시작! (%s)" % (svc[0], svc[1], self.source_note()), 220, "all")
+            if self.live_fail:
+                self.log("실연동 실패 (%s) - 그 부분은 mock 으로 진행" % self.live_fail, 203, "all")
         self.phase = "play"
         self.set_view(view)
+
+    def source_note(self):
+        """지금 쥐와 트래픽이 어디서 오는지 한 줄."""
+        if self.live is None and self.traffic is None:
+            return "mock 데이터"
+        mice = "쥐 = Sentry %s/%s 실제 미해결 이슈" % (self.live.org, self.live.project) if self.live else "쥐는 mock"
+        traffic = "트래픽 = 실제 서버 /metrics (최고치 %d rps)" % self.traffic.peak if self.traffic else "트래픽은 mock"
+        return "%s, %s" % (mice, traffic)
+
+    def live_badge(self):
+        parts = [n for n, on in (("SENTRY", self.live), ("TRAFFIC", self.traffic)) if on is not None]
+        return "LIVE " + "+".join(parts) if parts else "MOCK"
 
     def menu_move(self, d):
         if self.menu_col == 0:
@@ -936,6 +953,9 @@ class World:
 
     # ---- 이벤트(키 입력 · 자동 연출 공용)
     def traffic_spike(self):
+        if self.traffic is not None:
+            self.log("트래픽 실연동 중 - 가짜 급증은 만들지 않는다 (서버에 실제 요청이 몰려야 줄이 길어진다)", 245, "traffic")
+            return
         self.src.add_spike(self.t)
         self.log("크리스마스 특가 오픈! 트래픽 급증 - 광장이 붐빈다", 213, "traffic")
 
@@ -1095,10 +1115,18 @@ class World:
             for at, name, fn in ((12, "spike", self.traffic_spike), (45, "outbreak", self.outbreak)):
                 if ct >= at and (cyc, name) not in self.fired:
                     self.fired.add((cyc, name))
-                    if not (name == "outbreak" and self.live is not None):
+                    if not ((name == "outbreak" and self.live is not None)
+                            or (name == "spike" and self.traffic is not None)):
                         fn()
 
-        self.rps = self.src.rps(self.t) * self.svc[3]
+        if self.traffic is not None:
+            self.rps = self.traffic.rps()
+            if self.traffic.down != self.traffic_down:
+                self.traffic_down = self.traffic.down
+                self.log("트래픽 읽기 실패 (%s) - 0 rps 로 표시, 계속 재시도" % self.traffic.last_error if self.traffic_down
+                         else "트래픽 읽기 복구", 245, "all")
+        else:
+            self.rps = self.src.rps(self.t) * self.svc[3]
         for issue in self.poll_new_issues(dt):
             self.log("Sentry %s이슈 %s: %s" % ("미해결 " if issue.get("live") else "신규 ", issue["id"],
                                              issue["title"][:40]), 203)
@@ -1217,6 +1245,7 @@ class World:
             "stats": dict(self.stats, mrs=self.mr - 1400),
             "auto": self.auto,
             "live": {"on": self.live is not None, "source": "sentry" if self.live else "mock",
+                     "traffic": "metrics" if self.traffic else "mock",
                      "calls": self.live.calls if self.live else 0, "fails": self.live.fails if self.live else 0},
             "ai": {"on": self.ai is not None, "model": self.ai.model if self.ai else None,
                    "calls": self.ai.calls if self.ai else 0, "fails": self.ai.fails if self.ai else 0},
@@ -1596,7 +1625,7 @@ def header(world, w, paused):
         segs.append((" ", 7))
         x += 1
     right = [("%s%s  %s  " % ("|| PAUSED  " if paused else "", "AUTO" if world.auto else "MANUAL",
-                              "LIVE SENTRY" if world.live is not None else "MOCK"), 223)]
+                              world.live_badge()), 223)]
     gap = w - seg_width(segs) - seg_width(right)
     return seg_line(segs + [(" " * max(0, gap), 7)] + right, w, 52)
 
@@ -2168,21 +2197,51 @@ def attach_ai(world, use_ai=True, replay=None):
 def attach_live(world, feed=None):
     """--live: Sentry 미해결 이슈를 쥐로 쓴다. 설정이 없거나 첫 읽기가 실패하면 mock 으로 돈다."""
     if sentry_live is None or (feed is None and not sentry_live.configured()):
-        world.live_fail = ".env 에 SENTRY_AUTH_TOKEN · SENTRY_ORG · SENTRY_PROJECT 필요"
-        world.log("Sentry 실연동 실패 (%s) - mock 으로 진행" % world.live_fail, 203, "all")
-        return False
+        return live_failed(world, "Sentry: .env 에 SENTRY_AUTH_TOKEN · SENTRY_ORG · SENTRY_PROJECT 필요")
     feed = feed or sentry_live.SentryFeed()
     try:
         n = feed.fetch()
     except Exception:  # noqa: BLE001
-        world.live_fail = feed.last_error
-        world.log("Sentry 실연동 실패 (%s) - mock 으로 진행" % world.live_fail, 203, "all")
-        return False
+        return live_failed(world, "Sentry: %s" % feed.last_error)
     world.live = feed
     feed.start()
-    world.log("🔌 Sentry 실연동 (%s/%s) - 미해결 이슈 %d건 읽음 · 읽기 전용 · 트래픽은 mock" % (
-        feed.org, feed.project, n), 141, "all")
+    world.log("🔌 Sentry 실연동 (%s/%s) - 미해결 이슈 %d건 읽음 · 읽기 전용" % (feed.org, feed.project, n), 141, "all")
     return True
+
+
+def live_failed(world, why):
+    world.live_fail = "%s / %s" % (world.live_fail, why) if world.live_fail else why
+    world.log("실연동 실패 (%s) - 그 부분은 mock 으로 진행" % why, 203, "all")
+    return False
+
+
+def attach_traffic(world, feed=None):
+    """--live: 실제 서버의 /metrics 에서 rps 를 읽는다. 첫 읽기가 실패하면 mock 트래픽으로 돈다."""
+    if traffic_live is None:
+        return False
+    feed = feed or traffic_live.TrafficFeed()
+    try:
+        feed.sample()
+    except Exception:  # noqa: BLE001
+        return live_failed(world, "트래픽: %s" % feed.last_error)
+    world.traffic = feed
+    feed.start()
+    world.log("🔌 트래픽 실연동 - %s 의 %s 를 %g초마다 읽음 (최고치 %d rps)" % (
+        feed.url, feed.metric, feed.interval, feed.peak), 141, "all")
+    return True
+
+
+def attach_live_all(world):
+    """--live: .env 에 설정된 것만 붙인다 (Sentry 이슈 · 트래픽 /metrics). 둘 다 없으면 이유를 남기고 mock."""
+    did = False
+    if sentry_live is not None and sentry_live.configured():
+        did = True
+        attach_live(world)
+    if traffic_live is not None and traffic_live.configured():
+        did = True
+        attach_traffic(world)
+    if not did:
+        live_failed(world, ".env 에 SENTRY_AUTH_TOKEN·SENTRY_ORG·SENTRY_PROJECT 또는 TRAFFIC_METRICS_URL 필요")
 
 
 def run_interactive(skip_intro=False, use_ai=True, replay=None, live=False):
@@ -2195,7 +2254,7 @@ def run_interactive(skip_intro=False, use_ai=True, replay=None, live=False):
     world = World()
     attach_ai(world, use_ai, replay)
     if live:
-        attach_live(world)
+        attach_live_all(world)
     if skip_intro:
         world.set_view("menu")
     state = {"quit": False, "paused": False}
@@ -2323,7 +2382,7 @@ def run_stream(w, h, skip_intro=False, use_ai=True, replay=None, live=False):
     world = World()
     attach_ai(world, use_ai, replay)
     if live:
-        attach_live(world)
+        attach_live_all(world)
     if skip_intro:
         world.set_view("menu")
     state = {"quit": False, "paused": False}
@@ -2409,7 +2468,7 @@ def main():
     ap.add_argument("--replay", nargs="?", const=REPLAY_DEFAULT, metavar="JSONL",
                     help="API 키 없이 녹화된 실제 AI 트리아지 결과를 재생 (기본 recordings/ai.jsonl)")
     ap.add_argument("--live", action="store_true",
-                    help="쥐를 실제 Sentry 미해결 이슈로 (읽기 전용, .env 의 SENTRY_AUTH_TOKEN·SENTRY_ORG·SENTRY_PROJECT)")
+                    help="실연동(읽기 전용): 쥐 = 실제 Sentry 미해결 이슈 (.env 의 SENTRY_*), 트래픽 = 실제 서버 /metrics (TRAFFIC_METRICS_URL)")
     args = ap.parse_args()
     if args.seed is not None:
         R.seed(args.seed)
