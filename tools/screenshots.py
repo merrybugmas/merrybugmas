@@ -3,6 +3,7 @@
 """README 용 스크린샷: 게임 화면을 그대로(▀ 반블록 픽셀) PNG·GIF 로 뽑는다.
 
   python3 tools/screenshots.py            # docs/images/ 에 저장 (Pillow 필요: pip install pillow)
+  python3 tools/screenshots.py --ai-only  # OPENAI_API_KEY 로 실제 AI 병정 화면만 (ai.png · ai-history.png, 약 1분)
 
 터미널 없이 xmas_market.py 의 World 를 돌려 compose() 결과를 그린다. 칸 하나 = 8x16 px.
 글꼴은 macOS 기본(Menlo · Apple SD Gothic Neo · Apple Color Emoji)을 쓴다.
@@ -15,6 +16,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "docs", "images")
+sys.path.insert(0, ROOT)  # xmas_market 이 ai.py 를 찾도록
 spec = importlib.util.spec_from_file_location("xm", os.path.join(ROOT, "xmas_market.py"))
 xm = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(xm)
@@ -83,6 +85,36 @@ def run(world, sec, events=()):
         world.update(1 / 12)
 
 
+def run_live(world, sec, events=()):
+    """AI 결과는 실제 시간에 도착하므로 화면 시간과 실제 시간을 맞춰 돌린다."""
+    import time
+    todo = sorted(events, key=lambda e: e[0])
+    for i in range(int(sec * 12)):
+        while todo and todo[0][0] <= i / 12:
+            todo.pop(0)[1]()
+        world.update(1 / 12)
+        time.sleep(1 / 12)
+
+
+def shot_ai(W, H):
+    """실제 OpenAI 호출로 AI 병정 장면을 찍는다. 가짜 응답은 쓰지 않는다."""
+    if xm.ai is None or not xm.ai.available():
+        print("ai.png 건너뜀: OPENAI_API_KEY 가 없다")
+        return
+    xm.R.seed(5)
+    w = xm.World()
+    w.ai = xm.ai.Brain()
+    w.start_stage(1, "sentry")
+    xm.compose(w, W, H)
+    run_live(w, 30, [(1, lambda: w.outbreak(5)),
+                     (14, lambda: w.order("진저야 제일 오래 돌아다닌 쥐부터 잡아")),
+                     (22, w.brief)])
+    shot("ai.png", w, W, H)
+    w.open_history()
+    shot("ai-history.png", w, W, H)
+    print("AI 호출 %d회 · 실패 %d회%s" % (w.ai.calls, w.ai.fails, " (%s)" % w.ai.last_error if w.ai.fails else ""))
+
+
 def shot(name, world, w, h):
     img = render(xm.compose(world, w, h), w, h)
     path = os.path.join(OUT, name)
@@ -93,6 +125,9 @@ def shot(name, world, w, h):
 def main():
     os.makedirs(OUT, exist_ok=True)
     W, H = 100, 40
+    if "--ai-only" in sys.argv:
+        shot_ai(W, H)
+        return
 
     # 1. 타이틀 애니메이션 (GIF)
     xm.R.seed(11)
@@ -143,6 +178,9 @@ def main():
     w.show_hist = False
     w.set_view("overview")
     shot("overview.png", w, W, H)
+
+    # 7. AI 병정 (키가 있을 때만, 실제 호출)
+    shot_ai(W, H)
 
 
 if __name__ == "__main__":
