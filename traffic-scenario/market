@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+RUNTIME="${XMAS_MARKET_RUNTIME:-$HERE/.runtime}"
+mkdir -p "$RUNTIME"
+case "${1:-help}" in
+  status) cat "$RUNTIME/state.json" ;;
+  help|-h|--help)
+    echo './market experiment normal|surge [고객수] [유입초]'
+    echo './market experiment stop|replay|compare [정책ID]'
+    echo './market experiment select <고객ID|요청ID>'
+    echo './market status'
+    ;;
+  *) printf '%s\n' "$*" >> "$RUNTIME/cmd" ;;
+esac

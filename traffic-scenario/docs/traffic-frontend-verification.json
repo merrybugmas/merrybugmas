@@ -1,0 +1,112 @@
+{
+  "before": {
+    "run_id": "run-5e4f6823d8d044e7a8d8",
+    "status": "completed",
+    "source_run_id": null,
+    "config": {
+      "scenario_id": "surge",
+      "request_count": 1000,
+      "arrival_duration_s": 0.5,
+      "seed": 42,
+      "client_timeout_ms": 5000
+    },
+    "started_at": "2026-11-27T08:36:56.858Z",
+    "finished_at": "2026-11-27T08:37:03.902Z",
+    "last_seq": 14778,
+    "server_counts": {
+      "received": 417,
+      "queued": 0,
+      "processing": 0,
+      "succeeded": 417,
+      "failed": 0,
+      "cancelled": 0
+    },
+    "client_counts": {
+      "planned": 1000,
+      "sent": 1000,
+      "success": 407,
+      "failed": 593,
+      "pending": 0,
+      "dropped": 0
+    },
+    "metrics": {
+      "avg_response_ms": 2795.8355094183175,
+      "p95_response_ms": 4935.924709076062,
+      "failure_rate": 0.593,
+      "success_rps": 60.386664573712714
+    },
+    "telemetry_complete": true,
+    "agent_phase": "idle",
+    "artifact": {
+      "code_revision": "sha256:8b6372b476fed7ec44175d48adf59d22efa9ccd654249d7e45788fd2a37ee671",
+      "schema_hash": "sha256:cf5528fd6220d1079464d6a651f85244f4e1eb7cfa2f61a99b4d0b659c7dd54b",
+      "dataset_hash": "sha256:f5f46ca110c31c72a0d04f9bb09dc3d24348b70dbadd2b65941d9d574bb157c7",
+      "request_plan_hash": "sha256:4701fb9c4679ebcaacaf6050812391cb4cb01366eac41bb7e98cc27b12a8a7ff",
+      "runtime_config_hash": "sha256:e43182b159a672162b19b106b46bf629d74e3e47da3568514c34ea85e17c8a22",
+      "warmup_policy": "reference-query-warmup-v1"
+    }
+  },
+  "after": {
+    "run_id": "run-10caf9c2f60b439a81c9",
+    "status": "completed",
+    "source_run_id": "run-5e4f6823d8d044e7a8d8",
+    "config": {
+      "scenario_id": "surge",
+      "request_count": 1000,
+      "arrival_duration_s": 0.5,
+      "seed": 42,
+      "client_timeout_ms": 5000
+    },
+    "started_at": "2026-11-27T08:37:05.437Z",
+    "finished_at": "2026-11-27T08:37:12.537Z",
+    "last_seq": 21096,
+    "server_counts": {
+      "received": 664,
+      "queued": 0,
+      "processing": 0,
+      "succeeded": 664,
+      "failed": 0,
+      "cancelled": 0
+    },
+    "client_counts": {
+      "planned": 1000,
+      "sent": 1000,
+      "success": 386,
+      "failed": 614,
+      "pending": 0,
+      "dropped": 0
+    },
+    "metrics": {
+      "avg_response_ms": 2803.143693975938,
+      "p95_response_ms": 4993.132375064306,
+      "failure_rate": 0.614,
+      "success_rps": 57.04875976958774
+    },
+    "telemetry_complete": true,
+    "agent_phase": "idle",
+    "artifact": {
+      "code_revision": "sha256:8b6372b476fed7ec44175d48adf59d22efa9ccd654249d7e45788fd2a37ee671",
+      "schema_hash": "sha256:cf5528fd6220d1079464d6a651f85244f4e1eb7cfa2f61a99b4d0b659c7dd54b",
+      "dataset_hash": "sha256:f5f46ca110c31c72a0d04f9bb09dc3d24348b70dbadd2b65941d9d574bb157c7",
+      "request_plan_hash": "sha256:4701fb9c4679ebcaacaf6050812391cb4cb01366eac41bb7e98cc27b12a8a7ff",
+      "runtime_config_hash": "sha256:e43182b159a672162b19b106b46bf629d74e3e47da3568514c34ea85e17c8a22",
+      "warmup_policy": "reference-query-warmup-v1"
+    }
+  },
+  "max_observed_queue": 103,
+  "customer_detail": true,
+  "same_plan_replay": true,
+  "policy_not_ready_displayed": true,
+  "renderer": "Existing main PixelCanvas and frame_blocks",
+  "traffic_only": true,
+  "agent_auto_execution": false,
+  "frontend_location": "traffic-scenario/frontend",
+  "shared_source_files_restored": true,
+  "relocation_tests_passed": 42,
+  "existing_tests_passed": 52,
+  "relocated_stream_entry_verified": true,
+  "motion_regression_tests_passed": 2,
+  "pending_fixes": [
+    "Startup connection-refused message before backend readiness"
+  ]
+}
