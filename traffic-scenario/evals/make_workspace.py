@@ -12,7 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 REPO = ROOT.parent
 INDEX_SQL = "CREATE INDEX IF NOT EXISTS idx_products_category_price_id ON products(category,price,product_id)"
 # 출발 상태마다 검색 인덱스 유무와 적용할 결함 파일 지정
-STATES = {"a": (False, None), "b": (True, "stock_recheck.patch"), "c": (True, None)}
+# live는 지금 저장소의 코드와 넘겨받은 상품 DB를 그대로 쓰는 시험 환경
+STATES = {"a": (False, None), "b": (True, "stock_recheck.patch"), "c": (True, None), "live": (None, None)}
 # 에이전트가 고칠 수 있는 파일. 심판 폴더에서는 작업 폴더의 파일을 가리키는 링크로 둠
 EDITABLE = ("catalog.py", "target.py")
 # 작업 폴더의 명령 도구. 판정 로직 없이 심판 프로세스에 명령만 전달
@@ -82,8 +83,8 @@ def copy_source(dest, fault):
         shutil.rmtree(dest / ".git")
 
 
-# 에이전트가 읽는 문서와 서버 코드에서 답이 되는 내용 제거
-def strip_answers(work):
+# 작업 폴더의 안내 문서를 작업 폴더에 있는 것만 가리키도록 조정
+def adapt_guides(work):
     for name in ("AGENTS.md", ".agents/skills/performance-repair/SKILL.md"):
         path = work / name
         # 작업 폴더에 없는 것을 가리키는 줄이 남으면 에이전트가 찾다가 명령이 실패함
@@ -91,6 +92,9 @@ def strip_answers(work):
         # 작업 폴더의 명령 도구는 표준 라이브러리만 써서 가상 환경이 필요 없음
         path.write_text("".join(lines).replace(".venv/bin/python", "python3"))
 
+
+# 에이전트가 읽는 문서와 서버 코드에서 답이 되는 내용 제거
+def strip_answers(work):
     drop(work / "backend" / "catalog.py", "INDEX_SQL = ", "\n")
     entry = work / "backend" / "__main__.py"
     drop(entry, '    index = sub.add_parser("index")', '    sub.add_parser("openapi")')
@@ -112,8 +116,12 @@ def prepare_data(work, judge, state, catalog):
     indexed, fault = STATES[state]
     shutil.copy(catalog, work / "data" / "catalog.sqlite")
     con = sqlite3.connect(work / "data" / "catalog.sqlite")
-    con.execute(INDEX_SQL if indexed else "DROP INDEX IF EXISTS idx_products_category_price_id")
-    con.execute("DROP TABLE IF EXISTS stock")
+
+    # live는 넘겨받은 DB의 인덱스와 재고 표를 바꾸지 않음
+    if indexed is not None:
+        con.execute(INDEX_SQL if indexed else "DROP INDEX IF EXISTS idx_products_category_price_id")
+        con.execute("DROP TABLE IF EXISTS stock")
+
     count = con.execute("SELECT COUNT(*) FROM products").fetchone()[0]
     con.commit()
     con.close()
@@ -126,7 +134,7 @@ def prepare_data(work, judge, state, catalog):
 
 
 # 심판 폴더와 작업 폴더 생성
-def build(state, dest, catalog=None, rules="study", port=8000):
+def build(state, dest, catalog=None, rules="study", port=8000, strip=True):
     dest = Path(dest).resolve()
 
     if dest.exists():
@@ -143,7 +151,10 @@ def build(state, dest, catalog=None, rules="study", port=8000):
 
     shutil.copytree(judge / ".agents", work / ".agents")
     shutil.copytree(judge / "backend", work / "backend")
-    strip_answers(work)
+    adapt_guides(work)
+
+    if strip:
+        strip_answers(work)
 
     if rules == "baseline":
         strip_study_rule(work)

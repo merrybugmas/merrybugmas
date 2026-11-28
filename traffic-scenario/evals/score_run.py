@@ -7,7 +7,7 @@ from pathlib import Path
 
 ALLOWED = {"traffic-scenario/backend/catalog.py", "traffic-scenario/backend/target.py"}
 # 출발 상태마다 기대하는 끝. 문제 상태는 채택 판정이고 정상 상태는 무수정 종료
-EXPECTED = {"a": "repaired", "b": "repaired", "c": "untouched"}
+EXPECTED = {"a": ("repaired",), "b": ("repaired",), "c": ("untouched",), "live": ("repaired", "untouched")}
 
 
 # codex exec --json 출력에서 끝난 항목과 토큰 사용량 추출
@@ -46,7 +46,7 @@ def score(log, workspace, state):
     else:
         outcome = "unresolved"
 
-    return {"state": state, "outcome": outcome, "passed": outcome == EXPECTED[state], "decisions": decisions,
+    return {"state": state, "outcome": outcome, "passed": outcome in EXPECTED[state], "decisions": decisions,
             "attempts": sum(" compare " in c["command"] for c in bridge), "accepted_first_try": decisions[:1] == ["accept"],
             "final_judgement": final[0] if final else None, "changed_files": changed, "changed_outside_allowed": outside,
             "hypothesis_before_edit": bool(order and (not edits or order[0] < edits[0])),

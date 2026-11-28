@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -44,9 +45,27 @@ def bridge(info, env, *argv):
     return json.loads(done.stdout) if done.returncode == 0 else {"error": done.stderr.strip()}
 
 
+# 다른 서버와 겹치지 않도록 연속으로 비어 있는 포트 세 개의 시작 번호 선택
+def free_ports(start=18200):
+    for base in range(start, start + 2000, 10):
+        taken = False
+
+        for port in (base, base + 1, base + 2):
+            with socket.socket() as sock:
+                taken = taken or sock.connect_ex(("127.0.0.1", port)) == 0
+
+        if not taken:
+            return base
+
+    raise SystemExit("비어 있는 포트를 찾지 못했습니다.")
+
+
 # 평가 한 번 실행
-def run_once(state, dest, catalog, rules="study", effort="medium", timeout=900, port=8000, seed=None, agent=True, model="gpt-6.2-sol"):
-    info = make_workspace.build(state, dest, catalog, rules, port)
+def run_once(state, dest, catalog, rules="study", effort="medium", timeout=900, port=None, seed=None, agent=True, model="gpt-6.2-sol",
+             load=None, strip=True, notify=None):
+    port = port or free_ports()
+    notify = notify or (lambda phase, message: None)
+    info = make_workspace.build(state, dest, catalog, rules, port, strip)
     root = Path(info["root"])
     env = {**os.environ, "MBM_PRODUCT_COUNT": str(info["product_count"]), "MBM_POLICIES": "agent_bridge/policies.json",
            "MBM_TARGET_PORT": str(port + 1), "MBM_TARGET_URL": f"http://127.0.0.1:{port + 1}", "MBM_CONTROL_URL": f"http://127.0.0.1:{port}"}
@@ -63,8 +82,15 @@ def run_once(state, dest, catalog, rules="study", effort="medium", timeout=900, 
             raise SystemExit("서버 또는 심판 프로세스가 준비되지 않았습니다. control.log를 확인하세요.")
 
         # 측정이 무효인 유입을 넘기면 에이전트가 할 일이 없으므로 유효할 때까지 세 번까지 다시 보냄
+        notify("testing", "시험 서버에서 같은 유입을 다시 보냅니다.")
+        given = load
+
         for attempt in range(3):
-            load = bridge(info, env, "run", "--random", *(["--seed", str(seed + attempt)] if seed is not None else []))
+            # 넘겨받은 유입 조건이 있으면 같은 요청 목록이 만들어지도록 그대로 보냄
+            if given:
+                load = bridge(info, env, "run", "--count", str(given["request_count"]), "--duration", str(given["arrival_duration_s"]), "--seed", str(given["seed"]))
+            else:
+                load = bridge(info, env, "run", "--random", *(["--seed", str(seed + attempt)] if seed is not None else []))
 
             if load.get("judgement") != "measurement_invalid":
                 break
@@ -77,6 +103,7 @@ def run_once(state, dest, catalog, rules="study", effort="medium", timeout=900, 
 
 
         if agent:
+            notify("analyzing", "시험 서버에서 원인을 조사하고 수정합니다.")
             command = ["codex", "exec", "-m", model, "-C", info["workspace"], "-c", 'default_permissions="eval"', "-c", permissions(info),
                        "-c", f'model_reasoning_effort="{effort}"', "--json", "-o", str(root / "codex-last.txt"), PROMPT]
             started = time.monotonic()
@@ -101,6 +128,7 @@ def run_once(state, dest, catalog, rules="study", effort="medium", timeout=900, 
         for proc in procs:
             proc.wait(timeout=20)
 
+    result.update(root=str(root), workspace=info["workspace"], judge=info["judge"], port=port)
     (root / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2))
 
     return result
@@ -115,7 +143,7 @@ if __name__ == "__main__":
     p.add_argument("--model", default="gpt-6.2-sol")
     p.add_argument("--effort", default="medium")
     p.add_argument("--timeout", type=int, default=900)
-    p.add_argument("--port", type=int, default=8000)
+    p.add_argument("--port", type=int)
     p.add_argument("--seed", type=int)
     p.add_argument("--skip-agent", action="store_true")
     args = p.parse_args()

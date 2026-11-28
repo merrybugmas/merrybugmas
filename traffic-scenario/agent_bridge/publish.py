@@ -25,7 +25,7 @@ def run(argv, cwd, timeout=90):
 
 
 # 올릴 PR의 브랜치와 제목과 본문과 변경 내용 준비
-def prepare(data_dir, sh=run):
+def prepare(data_dir, sh=run, diff=None):
     path = Path(data_dir) / "bridge-decision.json"
 
     if not path.exists():
@@ -37,12 +37,14 @@ def prepare(data_dir, sh=run):
     if decision["decision"] != "accept":
         raise SystemExit(json.dumps({"error": "NOT_ACCEPTED", "decision": decision["decision"], "reasons": decision["reasons"]}, ensure_ascii=False))
 
-    scope = guard.scope(data_dir)
+    # 시험 환경의 변경 내용을 넘겨받은 경우 범위 확인은 그 환경의 compare가 이미 함
+    if diff is None:
+        scope = guard.scope(data_dir)
 
-    if not scope["ok"]:
-        raise SystemExit(json.dumps({"error": "OUTSIDE_ALLOWED_SCOPE", "scope": scope}, ensure_ascii=False))
+        if not scope["ok"]:
+            raise SystemExit(json.dumps({"error": "OUTSIDE_ALLOWED_SCOPE", "scope": scope}, ensure_ascii=False))
 
-    diff = sh(["git", "diff", "HEAD", "--", *FILES], REPO)
+        diff = sh(["git", "diff", "HEAD", "--", *FILES], REPO)
 
     # DB에만 한 변경은 PR에 담을 수 없음
     if not diff.strip():
@@ -67,8 +69,8 @@ def prepare(data_dir, sh=run):
 
 
 # 사용 중인 작업 폴더를 건드리지 않도록 별도 worktree의 새 브랜치에 커밋해 PR 생성
-def publish(data_dir, confirm=False, draft=False, sh=run):
-    plan = prepare(data_dir, sh)
+def publish(data_dir, confirm=False, draft=False, sh=run, diff=None):
+    plan = prepare(data_dir, sh, diff)
     record = ROOT / ".runtime" / "perf-prs.json"
     opened = json.loads(record.read_text()) if record.exists() else {}
 
