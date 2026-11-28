@@ -1,6 +1,6 @@
 {
   "request_count": [5400, 6600],
-  "verify_request_count": [800, 1000],
+  "verify_request_count": [280, 320],
   "rate_per_s": [90, 110],
   "client_timeout_ms": 5000,
   "goal_success_rate": 0.99,

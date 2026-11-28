@@ -134,9 +134,9 @@ def test_score_separates_repair_from_untouched_and_unresolved(tmp_path):
 
 def test_verification_load_is_a_short_sample_at_the_same_rate():
     config = {"scenario_id": "surge", "request_count": 6000, "arrival_duration_s": 60.0, "seed": 9, "client_timeout_ms": 5000}
-    short = repair.sample(config)
-    assert short["request_count"] == 1000 and short["arrival_duration_s"] == 10.0 and short["seed"] == 9
-    assert repair.sample({**config, "request_count": 500, "arrival_duration_s": 5.0})["request_count"] == 500
+    short, limit = repair.sample(config), repair.LIMITS["verify_request_count"][1]
+    assert short["request_count"] == limit and short["arrival_duration_s"] == limit / 100 and short["seed"] == 9
+    assert repair.sample({**config, "request_count": 200, "arrival_duration_s": 2.0})["request_count"] == 200
 
 
 def test_judge_relays_agent_progress_to_production_screen(monkeypatch):

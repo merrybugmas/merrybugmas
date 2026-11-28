@@ -70,12 +70,18 @@ def commit(folder):
 
 
 # 원본 저장소의 추적 파일을 복사하고 출발 상태의 결함 적용
-def copy_source(dest, fault):
+def copy_source(dest, fault, live):
     # 커밋되지 않은 내용도 포함하도록 추적 중인 파일을 작업 폴더에서 그대로 복사
     for name in run("git", "ls-files", "-z", "traffic-scenario", cwd=REPO).split("\0"):
         if name and (REPO / name).is_file():
             (dest / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(REPO / name, dest / name)
+
+    # 출발 상태를 새로 만들 때는 저장소에 시연용 결함이 적용돼 있어도 커밋된 서버 코드에서 시작
+    if not live:
+        for name in run("git", "ls-files", "-z", "traffic-scenario/backend", cwd=REPO).split("\0"):
+            if name:
+                (dest / name).write_text(run("git", "show", "HEAD:" + name, cwd=REPO))
 
     if fault:
         run("git", "init", "-q", cwd=dest)
@@ -142,7 +148,7 @@ def build(state, dest, catalog=None, rules="study", port=8000, strip=True):
 
     fault = STATES[state][1]
     judge, work = dest / "judge" / "traffic-scenario", dest / "work" / "traffic-scenario"
-    copy_source(dest / "judge", fault)
+    copy_source(dest / "judge", fault, state == "live")
 
     # 검증기와 정책과 결함 파일과 테스트는 답이 되므로 작업 폴더에 넣지 않음
     for name in ("AGENTS.md", "README.md"):
