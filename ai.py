@@ -116,11 +116,15 @@ reply: 병정이 할 짧은 대답(한국어, 씩씩한 병정 말투). 보통 4
   "가장 큰/심각한 에러"는 사람에게 넘긴 것(human)을 먼저, 없으면 가장 많이 나온 에러를 말한다.
 """
 
-TRIAGE_PROMPT = """너는 sentry-bot 의 트리아지 담당이다. 프론트엔드 서비스의 Sentry 이슈 하나를 보고 판정한다.
+TRIAGE_PROMPT = """너는 sentry-bot 의 트리아지 담당이다. 웹 서비스의 Sentry 이슈 하나를 보고 판정한다.
+보통은 프론트엔드(브라우저) 에러이고, 입력에 "계층: 서버" 가 있으면 그 서비스의 서버(Python 등)에서 난 에러다.
 kind:
-  fixable     = 우리 레포 코드의 버그라서 코드 수정 MR 로 고칠 수 있다 (타입 오류, null 접근, 미지원 API 사용 등)
-  noise       = 레포 밖 출처라 고칠 게 없다 (브라우저 확장, 광고·서드파티 스크립트, 배포 직후 청크 로딩 실패 같은 일시적 네트워크 오류)
-  needs-human = 백엔드 장애·보안·인프라·정책 판단이 필요해 사람이 봐야 한다 (5xx API 오류, 보안 정책 위반, 런타임 변조 등)
+  fixable     = 우리 레포 코드의 버그라서 코드 수정 MR 로 고칠 수 있다 (타입 오류, null 접근, 미지원 API 사용 등.
+                서버면 우리 서버 코드의 KeyError·TypeError·ZeroDivisionError 같은 로직 버그)
+  noise       = 레포 밖 출처라 고칠 게 없다 (브라우저 확장, 광고·서드파티 스크립트, 배포 직후 청크 로딩 실패 같은 일시적 네트워크 오류.
+                서버면 손님이 먼저 연결을 끊은 BrokenPipe·ConnectionReset)
+  needs-human = 백엔드 장애·보안·인프라·정책 판단이 필요해 사람이 봐야 한다 (5xx API 오류, 보안 정책 위반, 런타임 변조 등.
+                서버면 DB 잠김·외부 서버 연결 거절 같은 인프라 장애)
 reason: 판정 근거 (한국어, 35자 이내)
 fix: fixable 이면 MR 제목으로 쓸 수정 요약 (한국어, 30자 이내). 아니면 "".
 """
@@ -277,6 +281,8 @@ class Brain:
 
     def triage(self, p):
         user = "서비스: %s\n이슈 ID: %s\n제목: %s" % (p.get("service") or "-", p["id"], p["title"])
+        if p.get("layer") == "server":  # 서버 에러일 때만 한 줄 (프론트 이슈의 입력은 예전과 같다)
+            user += "\n계층: 서버"
         r = self.ask(TRIAGE_PROMPT, user, "sentry_triage", TRIAGE_SCHEMA)
         kind = _choice(r.get("kind"), KINDS, "kind")
         return {"kind": kind, "reason": _str(r.get("reason")), "fix": _str(r.get("fix")) if kind == "fixable" else ""}

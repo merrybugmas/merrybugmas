@@ -8,9 +8,11 @@
 
 ## 현황 읽기
 - `./market status` — 1초마다 갱신되는 JSON. `phase`(intro/menu/play), `service`(지금 스테이지 서비스),
-  `traffic`(rps·peak_rps·queue 대기열 인원·queue_offscreen 화면 밖 인원·admitted 계산 완료 누적·인파 단계·최근 rps), `mice`(이슈 id·제목·판정·상태),
+  `traffic`(rps·peak_rps·queue 대기열 인원·queue_offscreen 화면 밖 인원·admitted 계산 완료 누적·인파 단계·최근 rps), `mice`(이슈 id·제목·판정·상태·layer),
   `soldiers`(병정 번호·이름·상태·추적 중인 이슈·off 복귀 명령·handled 처리 건수), `history`(잡은 쥐 기록), `stats`(MR 수·noise·human·block), `log`(최근 로그)
 - 쥐 상태: `roam` 돌아다님 / `held` 병정에게 잡힘 / `caged` needs-human 대기 / `flee` noise로 쫓겨남
+- 쥐의 `layer`: `front` 브라우저 에러 / `server` 서버(Python 등) 에러. `history[].layer` 도 같다.
+  "서버 에러 뭐 있어?" → layer 가 server 인 쥐로 답한다. 실연동에서는 Sentry 이슈의 platform 으로 가른다
 - `live.on` 이 true 면 쥐는 mock 이 아니라 실제 Sentry 미해결 이슈다 (`--live`, 읽기 전용). 이때 `outbreak`·`mouse` 는 가짜 쥐를 만들지 않는다
 - `live.traffic` 이 `metrics` 면 `traffic.rps` 는 실제 서버의 초당 요청 수다. 이때 `spike` 는 가짜 급증을 만들지 않는다
 - `traffic.web` 은 실연동일 때만 채워지는 웹 지표다: `error_pct`(5xx %, 최근 10초) · `latency_ms`(평균 응답) · `lcp_s` · `cls` · `inp_s` · `ttfb_s`(브라우저 Web Vitals p75). `null` 이거나 없으면 측정값이 없다는 뜻이니 지어내지 않는다
@@ -49,7 +51,7 @@
 ## 지시 보내기 (실행하면 대시보드에 바로 보인다)
 - `./market focus <ISSUE-ID>` — 그 이슈부터 처치
 - `./market human` — 사람이 우리 속 쥐를 처리했다고 알림
-- `./market spike` · `./market outbreak 3` · `./market mouse` — 시연용 이벤트
+- `./market spike` · `./market outbreak 3` · `./market mouse` — 시연용 이벤트. `./market outbreak 3 server` 는 서버 에러 쥐 ("서버 에러 내 봐")
 - `./market start <서비스> [traffic|sentry|overview|agents]` — 그 서비스로 스테이지 시작. 서비스: `ALL WEB SEARCH RESUME DISPLAY MOBILE`.
   "검색 쪽 버그 보여줘" → `./market start SEARCH sentry`. 서비스를 바꾸면 새 판(쥐·통계 초기화)이다
 - `./market view traffic` · `./market view sentry` · `./market view overview` · `./market view agents` · `./market view menu` — 화면 전환. "트래픽 보여줘", "쥐 잡는 거 보여줘", "개요로", "에이전트 보여줘"(병정 셋·엘프 카드), "메뉴로" 같은 말에 쓴다
