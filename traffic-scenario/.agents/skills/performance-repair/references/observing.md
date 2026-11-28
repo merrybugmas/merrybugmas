@@ -10,14 +10,14 @@
 
 ## 요청 하나가 시간을 쓰는 곳
 
-- `data/runs/<run_id>/` 아래에 실험 한 번의 원본 기록이 있다. `target/`에는 서버 이벤트 파일이 수백 개 있다. 파일 목록 전체를 출력하지 말고 필요한 파일만 읽는다.
+- 실험 한 번의 원본 기록은 `adopt`와 `replay`와 `run` 결과의 `records_dir`에 있다. `target/`에는 서버 이벤트 파일이 수백 개 있다. 파일 목록 전체를 출력하지 말고 필요한 파일만 읽는다.
 - 서버 이벤트에는 요청마다 대기 시간(`queue_wait_ms`)과 처리 시간(`processing_ms`)이 따로 있다. 대기가 긴지 처리가 긴지에 따라 볼 곳이 달라진다.
 - `GET /api/runs/<run_id>/requests/<request_id>`로 요청 하나의 전체 경과를 볼 수 있다.
 
 ## 처리 시간이 길 때 볼 것
 
 - 검색 한 번이 DB에 보내는 조회가 몇 개인지 코드에서 센다.
-- 각 조회가 표 전체를 읽는지 인덱스를 쓰는지 `EXPLAIN QUERY PLAN`으로 확인한다. `data/runs/<run_id>/query-plan.json`과 `schema.sql`에 실험 당시 값이 있다.
+- 각 조회가 표 전체를 읽는지 인덱스를 쓰는지 `EXPLAIN QUERY PLAN`으로 확인한다. `records_dir`의 `query-plan.json`과 `schema.sql`에 실험 당시 값이 있다.
 - 조회 하나를 따로 실행해 시간을 잰다. 서버 전체를 돌리지 않아도 된다.
 
 ## 판단할 때 주의할 것

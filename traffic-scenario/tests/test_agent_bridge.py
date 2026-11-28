@@ -6,7 +6,7 @@ import subprocess
 import pytest
 
 from agent_bridge import operations as cli
-from agent_bridge import guard, scenario, verify
+from agent_bridge import guard, publish, scenario, verify
 from backend import catalog
 
 
@@ -337,3 +337,51 @@ def test_adopt_takes_over_latest_screen_run(seeded, monkeypatch):
     assert out["run_id"] == "run-001" and out["truth"] == "sealed" and out["judgement"] == "healthy"
     cli.adopt(None)
     assert list(cli.ledger()[0]) == ["run-001"] and len((seeded.data_dir / "bridge-runs.jsonl").read_text().splitlines()) == 1
+
+
+def pr_setup(tmp_path, monkeypatch, decision="accept", diff="diff --git a/traffic-scenario/backend/catalog.py b/traffic-scenario/backend/catalog.py\n+x\n"):
+    (tmp_path / "bridge-decision.json").write_text(json.dumps({"decision": decision, "reasons": ["r"], "before": "run-B1", "after": "run-a1",
+        "customer_success_rate": {"before": 0.4743, "after": 1.0}, "goal_success_rate": 0.99, "runs": {"before": ["run-B1"], "after": ["run-a1"]}}))
+    monkeypatch.setattr(publish.guard, "scope", lambda data: {"ok": True})
+    monkeypatch.setattr(publish, "ROOT", tmp_path)
+    monkeypatch.delenv("XMAS_FIX_BASE", raising=False)
+    calls = []
+
+    def sh(argv, cwd, timeout=90):
+        calls.append(argv)
+
+        if argv[:2] == ["git", "diff"]:
+            return diff
+
+        if argv[:2] == ["git", "rev-parse"]:
+            return "feat/traffic-scenario\n"
+
+        return "https://example.test/pr/7\n" if argv[:3] == ["gh", "pr", "create"] else ""
+
+    return calls, sh
+
+
+def test_pr_is_only_prepared_for_accepted_fix_with_code_change(tmp_path, monkeypatch):
+    calls, sh = pr_setup(tmp_path, monkeypatch)
+    out = publish.publish(tmp_path, sh=sh)
+    assert out["dry_run"] and not out["published"] and out["base"] == "feat/traffic-scenario"
+    assert out["branch"].startswith("perf-bot/run-b1-") and "47.4% → 100.0%" in out["title"]
+    assert not any(c[:2] in (["git", "push"], ["gh", "pr"]) for c in calls)
+
+    for kwargs in ({"decision": "hold"}, {"diff": ""}):
+        _, sh = pr_setup(tmp_path, monkeypatch, **kwargs)
+
+        with pytest.raises(SystemExit):
+            publish.publish(tmp_path, confirm=True, sh=sh)
+
+
+def test_pr_is_opened_once_on_new_branch_without_merging(tmp_path, monkeypatch):
+    calls, sh = pr_setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(publish.subprocess, "run", lambda *a, **k: None)
+    out = publish.publish(tmp_path, confirm=True, sh=sh)
+    order = [" ".join(c[:3]) for c in calls]
+    assert out["published"] and out["url"] == "https://example.test/pr/7"
+    assert order.index("git worktree add") < order.index("git push -q") < order.index("gh pr create")
+    assert not any("merge" in c for c in calls) and ["git", "push", "-q", "-u", "origin", out["branch"]] in calls
+    again = publish.publish(tmp_path, confirm=True, sh=sh)
+    assert not again["published"] and again["already"]["url"] == out["url"]

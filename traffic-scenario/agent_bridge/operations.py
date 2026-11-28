@@ -70,7 +70,8 @@ def execute(body):
 
     out = verify.report(DATA, snapshot["run_id"], seal=True, source=body.get("source_run_id"))
 
-    return {"status": snapshot["status"], "config": snapshot["config"], "server_metrics": snapshot["metrics"], **out}
+    return {"status": snapshot["status"], "config": snapshot["config"], "server_metrics": snapshot["metrics"],
+            "records_dir": str(DATA / "runs" / snapshot["run_id"]), **out}
 
 
 # 이번 시도에서 실행한 실험과 재시작을 순서대로 기록
@@ -111,7 +112,8 @@ def adopt(run_id):
 
     out = verify.report(DATA, run_id, seal=True, source=snapshot.get("source_run_id"))
 
-    return {"status": snapshot["status"], "config": snapshot["config"], "server_metrics": snapshot["metrics"], **out}
+    return {"status": snapshot["status"], "config": snapshot["config"], "server_metrics": snapshot["metrics"],
+            "records_dir": str(DATA / "runs" / snapshot["run_id"]), **out}
 
 
 # 한도 파일의 범위 안에서 유입 조건 선택
@@ -200,6 +202,10 @@ def compare(before, after):
 
     rate = {k: round(sum(r["customer_success_rate"] for r in g) / len(g), 4) if g else None for k, g in groups.items()}
 
-    return {"decision": decision, "verdict": result["verdict"], "reasons": result["reasons"],
-            "correctness_passed": result["correctness_passed"], "scope": scope, "customer_success_rate": rate,
-            "goal_success_rate": LIMITS["goal_success_rate"], "runs": ids, "metrics": result["metrics"]}
+    out = {"decision": decision, "verdict": result["verdict"], "reasons": result["reasons"],
+           "correctness_passed": result["correctness_passed"], "scope": scope, "customer_success_rate": rate,
+           "goal_success_rate": LIMITS["goal_success_rate"], "runs": ids, "metrics": result["metrics"]}
+    # PR을 올릴 때 마지막 판정을 근거로 쓰도록 남김
+    (DATA / "bridge-decision.json").write_text(json.dumps({**out, "before": before, "after": after}, ensure_ascii=False, indent=2))
+
+    return out

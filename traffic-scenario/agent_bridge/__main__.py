@@ -6,7 +6,7 @@ import random
 import subprocess
 import uuid
 
-from . import guard, operations as ops, scenario, verify
+from . import guard, operations as ops, publish, scenario, verify
 
 
 # 명령 처리
@@ -44,6 +44,7 @@ def main():
     for name in ("snapshot", "rollback", "scope"):
         sub.add_parser(name)
 
+    sub.add_parser("pr").add_argument("--publish", action="store_true")
     sub.add_parser("scenario").add_argument("name", choices=sorted(scenario.STATES))
     args = p.parse_args()
 
@@ -87,6 +88,8 @@ def main():
         # 되돌린 뒤에는 재시작이 실패해도 지난 후보의 판정을 쓰지 못하게 묶음을 나눔
         ops.note({"restart": True, "by": "rollback"})
         out = guard.rollback(ops.DATA)
+    elif args.command == "pr":
+        out = publish.publish(ops.DATA, args.publish)
     elif args.command == "scope":
         out = guard.scope(ops.DATA)
     else:

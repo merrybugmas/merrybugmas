@@ -140,6 +140,7 @@ sequenceDiagram
 | [`operations.py`](operations.py) | 제어 서버 API를 호출한다. 이번 시도의 실험 묶음을 기록하고 최종 판정을 낸다 | `compare`의 조건 순서가 판정을 정한다. 순서를 바꾸면 [`../tests/test_agent_bridge.py`](../tests/test_agent_bridge.py)의 판정 테스트를 함께 본다 |
 | [`verify.py`](verify.py) | 실험 한 번의 원본 기록을 읽어 고객 기준 결과와 측정 유효성을 계산한다 | 검색 서버 코드를 불러 쓰지 않는다. 불러 쓰면 Codex의 수정이 채점 기준을 바꾸게 된다 |
 | [`guard.py`](guard.py) | `backend/`를 복사해 두고 되돌린다. 파일 내용 해시로 수정 범위를 확인한다 | `rollback`은 파일을 지운다. 복사본 확인이 삭제보다 먼저 실행돼야 한다 |
+| [`publish.py`](publish.py) | 채택된 수정을 별도 worktree의 새 브랜치에 커밋해 PR로 올린다. 병합하지 않는다 | 저장소 루트의 `fixer.py`와 같은 방식이다. `compare`가 `accept`를 낸 수정만 올린다 |
 | [`scenario.py`](scenario.py) | 출발 상태에 맞게 결함 파일과 검색 인덱스를 넣거나 뺀다 | 코드와 DB를 바꾸기 전에 현재 상태를 확인하는 순서를 지킨다 |
 | [`faults/stock_recheck.patch`](faults/stock_recheck.patch) | 출발 상태 `b`의 결함 | `backend/catalog.py`가 바뀌면 적용되지 않을 수 있다. 테스트가 적용 가능 여부를 확인한다 |
 | [`limits.json`](limits.json) | 유입 범위와 고객 목표와 반복 횟수 | 범위를 넓히면 부하를 보내는 쪽이 밀려 측정 무효가 늘 수 있다 |
@@ -334,6 +335,7 @@ flowchart TD
 | `restart <run_id>` | Codex | 검색 서버를 재시작해 수정을 반영한다 |
 | `compare <기준> <후보>` | Codex | 전후를 비교해 판정한다 |
 | `rollback` | Codex | 코드와 DB 구조를 저장한 상태로 되돌린다 |
+| `pr [--publish]` | 사람 | 채택된 수정으로 올릴 PR의 브랜치와 제목과 변경 내용을 보여 준다. `--publish`를 붙이면 새 브랜치에 커밋해 PR을 연다 |
 | `progress <run_id> <단계> <메시지>` | Codex | 작업 단계를 화면에 전달한다. 단계는 `analyzing` `modifying` `restarting` `testing` `comparing` `finished` `failed` 중 하나다 |
 
 ## 6. 환경변수와 설정
