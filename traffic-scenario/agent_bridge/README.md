@@ -190,7 +190,7 @@ export MBM_DATA_DIR=data/demo-1m MBM_PRODUCT_COUNT=1000000 MBM_POLICIES=agent_br
 
 > $performance-repair 기획전 트래픽이 유입됐다. 고객이 제시간에 올바른 검색 결과를 받는지 확인하고 변경이 필요하면 근거와 함께 수정하라.
 
-`./demo codex`가 같은 문장으로 `codex exec`를 실행한다. Codex 구독 한도를 쓴다. 두 터미널과 Codex가 같은 데이터 폴더를 보도록 환경변수는 스크립트가 지정한다.
+`./demo codex`가 같은 문장으로 `codex exec`를 실행한다. 모델은 `gpt-6.2-sol`이고 생각 단계는 `medium`으로 고정한다. 환경변수 `CODEX_MODEL`과 `CODEX_EFFORT`로 바꿀 수 있다. Codex 구독 한도를 쓴다. 두 터미널과 Codex가 같은 데이터 폴더를 보도록 환경변수는 스크립트가 지정한다.
 
 Codex가 따르는 절차는 [`../.agents/skills/performance-repair/SKILL.md`](../.agents/skills/performance-repair/SKILL.md)에 있고 관측 방법은 [`../.agents/skills/performance-repair/references/observing.md`](../.agents/skills/performance-repair/references/observing.md)에 있다.
 

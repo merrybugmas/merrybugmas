@@ -21,7 +21,8 @@ case "${1:-help}" in
     ;;
   codex)
     # Codex 구독 한도를 쓰는 유료 실행
-    codex exec -s workspace-write -c sandbox_workspace_write.network_access=true \
+    # 사용자의 평소 설정과 무관하게 같은 모델과 생각 단계로 실행
+    codex exec -m "${CODEX_MODEL:-gpt-6.2-sol}" -s workspace-write -c sandbox_workspace_write.network_access=true \
       -c "model_reasoning_effort=\"${CODEX_EFFORT:-medium}\"" "$REQUEST"
     ;;
   pr)

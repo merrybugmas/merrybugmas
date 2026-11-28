@@ -45,13 +45,13 @@ def bridge(info, env, *argv):
 
 
 # 평가 한 번 실행
-def run_once(state, dest, catalog, rules="study", effort="medium", timeout=900, port=8000, seed=None, agent=True):
+def run_once(state, dest, catalog, rules="study", effort="medium", timeout=900, port=8000, seed=None, agent=True, model="gpt-6.2-sol"):
     info = make_workspace.build(state, dest, catalog, rules, port)
     root = Path(info["root"])
     env = {**os.environ, "MBM_PRODUCT_COUNT": str(info["product_count"]), "MBM_POLICIES": "agent_bridge/policies.json",
            "MBM_TARGET_PORT": str(port + 1), "MBM_TARGET_URL": f"http://127.0.0.1:{port + 1}", "MBM_CONTROL_URL": f"http://127.0.0.1:{port}"}
     env.pop("MBM_DATA_DIR", None)
-    procs, result = [], {"state": state, "rules": rules, "effort": effort}
+    procs, result = [], {"state": state, "rules": rules, "model": model, "effort": effort}
 
     try:
         with (root / "control.log").open("w") as log:
@@ -77,7 +77,7 @@ def run_once(state, dest, catalog, rules="study", effort="medium", timeout=900, 
 
 
         if agent:
-            command = ["codex", "exec", "-C", info["workspace"], "-c", 'default_permissions="eval"', "-c", permissions(info),
+            command = ["codex", "exec", "-m", model, "-C", info["workspace"], "-c", 'default_permissions="eval"', "-c", permissions(info),
                        "-c", f'model_reasoning_effort="{effort}"', "--json", "-o", str(root / "codex-last.txt"), PROMPT]
             started = time.monotonic()
 
@@ -112,11 +112,12 @@ if __name__ == "__main__":
     p.add_argument("dest")
     p.add_argument("--catalog", required=True)
     p.add_argument("--rules", choices=["study", "baseline"], default="study")
+    p.add_argument("--model", default="gpt-6.2-sol")
     p.add_argument("--effort", default="medium")
     p.add_argument("--timeout", type=int, default=900)
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--seed", type=int)
     p.add_argument("--skip-agent", action="store_true")
     args = p.parse_args()
-    print(json.dumps(run_once(args.state, args.dest, args.catalog, args.rules, args.effort, args.timeout, args.port, args.seed, not args.skip_agent),
+    print(json.dumps(run_once(args.state, args.dest, args.catalog, args.rules, args.effort, args.timeout, args.port, args.seed, not args.skip_agent, args.model),
                      ensure_ascii=False, indent=2))
