@@ -1,0 +1,27 @@
+{
+  "id": "CASE-009",
+  "title": "배포 후 청크 로딩 실패",
+  "service_id": "SERVICE-DEMO-WEB",
+  "pattern_id": "PATTERN-CHUNK",
+  "kind": "needs-human",
+  "status": "reference",
+  "rule_ids": [
+    "RULE-CHUNK"
+  ],
+  "summary": "배포 후 청크 로딩 실패",
+  "fix_strategy": "배포 버전과 자산 경로/캐시를 확인해 일시적 네트워크와 배포 결함을 구분한다.",
+  "conditions": [
+    "청크 요청 실패의 URL과 release를 확인"
+  ],
+  "avoid": [
+    "제목만 보고 항상 noise로 버리지 않는다"
+  ],
+  "tests": [
+    "실제 404와 네트워크 단절 구분"
+  ],
+  "sources": [
+    "https://github.com/merrybugmas/merrybugmas/blob/7ce96f157f586895d2a322967f5bf730cd2e1a3a/tests/data/triage_eval.jsonl"
+  ],
+  "source_blob": "",
+  "verification": "코드/평가 예시에서 정리한 참고 자료. 실제 해결·머지·배포를 검증한 사례가 아님."
+}

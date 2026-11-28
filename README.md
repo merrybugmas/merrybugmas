@@ -27,6 +27,18 @@ python3 xmas_market.py --live   # (선택) 쥐 = 실제 Sentry 미해결 이슈,
 | [AGENTS.md](AGENTS.md) | 채팅 쪽 AI(Codex·Claude Code)가 대시보드를 읽고 지휘하는 규칙 |
 | [docs/submission-draft.md](docs/submission-draft.md) | 공모 제출 초안 |
 
+## 📚 작전 교본 — 온톨로지 + 사례 검색 RAG
+
+서비스·오류 유형·수정 사례·정상 동작 규칙을 연결하고, 이슈마다 관련 사례 최대 3건을 찾아 분류·패치·Codex 리뷰에 전달한다.
+`./market kb <이슈 ID>`로 검색 이유와 출처를 보고, PR에서 참고 사례·검증 체크리스트를 확인한다. 초기 10건은 해결 검증 전의 참고 자료다.
+
+```bash
+python3 tools/demo_knowledge.py        # 키 없이 검색 근거 화면 (OpenAI 0회)
+python3 tools/eval_knowledge.py        # 검색 회귀 평가 (모델 정확도 평가 아님)
+```
+
+설정·실연동·지식 추가·발표 시연은 [docs/knowledge-base.md](docs/knowledge-base.md).
+
 ## 왜 만들었나
 장애가 나면 운영자는 Grafana(트래픽)·Sentry(에러)·자동 수정 봇(sentry-bot)의 진행 상황을 각각 다른 화면에서 맞춰 봐야 한다.
 "지금 무엇이 터졌고, 봇은 무엇을 처리 중이며, 사람이 봐야 할 건 무엇인가"를 한눈에 보기 어렵고, 봇이 무슨 판단을 했는지는 더 안 보인다.

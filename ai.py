@@ -26,6 +26,8 @@ import time
 import urllib.error
 import urllib.request
 
+import knowledge
+
 DEFAULT_MODEL = "gpt-5-mini"
 
 KINDS = ["fixable", "noise", "needs-human"]
@@ -269,7 +271,8 @@ class Brain:
         if not path or kind != "triage":
             return
         line = json.dumps({"kind": kind, "key": payload["title"], "model": self.model,
-                           "at": time.strftime("%Y-%m-%d"), "result": res}, ensure_ascii=False)
+                           "at": time.strftime("%Y-%m-%d"), "result": res,
+                           "knowledge": knowledge.brief(payload.get("knowledge"))}, ensure_ascii=False)
         with self.lock, open(path, "a", encoding="utf-8") as f:
             f.write(line + "\n")
 
@@ -283,6 +286,11 @@ class Brain:
 
     def triage(self, p):
         user = "서비스: %s\n이슈 ID: %s\n제목: %s" % (p.get("service") or "-", p["id"], p["title"])
+        if p.get("culprit"):
+            user += "\n위치: " + p["culprit"]
+        if p.get("event_context"):
+            user += "\n대표 이벤트: " + json.dumps(p["event_context"], ensure_ascii=False)
+        user += knowledge.notes(p.get("knowledge"))
         if p.get("layer") == "server":  # 서버 에러일 때만 한 줄 (프론트 이슈의 입력은 예전과 같다)
             user += "\n계층: 서버"
         r = self.ask(TRIAGE_PROMPT, user, "sentry_triage", TRIAGE_SCHEMA)

@@ -1,0 +1,16 @@
+[
+  {
+    "id": "SERVICE-DEMO-WEB",
+    "repo": "merrybugmas/demo-web",
+    "service": "WEB",
+    "projects": [
+      "web"
+    ]
+  },
+  {
+    "id": "SERVICE-MOCK-RESUME",
+    "repo": "demo:merrybugmas",
+    "service": "RESUME",
+    "projects": []
+  }
+]

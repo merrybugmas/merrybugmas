@@ -1,0 +1,29 @@
+{
+  "id": "CASE-003",
+  "title": "잘못된 배송 날짜",
+  "service_id": "SERVICE-DEMO-WEB",
+  "pattern_id": "PATTERN-DATE",
+  "kind": "fixable",
+  "status": "reference",
+  "rule_ids": [
+    "RULE-DATE"
+  ],
+  "summary": "잘못된 배송 날짜",
+  "fix_strategy": "유효하지 않은 날짜를 변환하기 전에 구분하고 사용자에게 상태를 표시한다.",
+  "conditions": [
+    "실패 지점이 toISOString이며 날짜 입력이 유효하지 않다"
+  ],
+  "avoid": [
+    "임의의 오늘 날짜로 대체하지 않는다",
+    "물류팀 확인이 필요한 업무 규칙을 우회하지 않는다"
+  ],
+  "tests": [
+    "유효 날짜 표시",
+    "잘못된 날짜 안내"
+  ],
+  "sources": [
+    "https://github.com/merrybugmas/demo-web/blob/main/app.js"
+  ],
+  "source_blob": "137c1cb4c6374990cdefc8bc69b2a88a932c1e99",
+  "verification": "코드/평가 예시에서 정리한 참고 자료. 실제 해결·머지·배포를 검증한 사례가 아님."
+}

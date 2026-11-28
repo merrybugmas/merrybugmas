@@ -69,3 +69,12 @@
 - 질문을 받으면 먼저 `./market status`를 읽고 숫자로 답한다. 기억이나 추측으로 답하지 않는다.
 - 답을 준 뒤 핵심 한 줄을 `./market say`로 대시보드에도 띄운다.
 - 이 디렉토리의 코드는 고치지 않는다. 요청받은 경우만 예외다.
+
+## 작전 교본 (지식베이스)
+- `./market kb [ISSUE-ID]`: 이슈가 참고한 사례·검색 이유·업무 규칙·출처를 기록 창에 표시한다.
+- `status.knowledge`는 활성 여부·지식 버전·대상 repo·사례 수·로드 오류다.
+- `mice[].knowledge`·`history[].knowledge`에는 사례 ID, 상태, 선택 이유, 출처, 연결된 규칙과 관계가 있다.
+- `knowledge_usage: reference-only`는 검색 참고 자료다. `triage`는 AI 분류 입력에 전달한 사실이며 모델이 실제로 그 근거를 따랐음을 보장하지 않는다.
+- `history[].resolution_status: pr-open`은 PR 생성, `simulated`는 mock 연출이다. 머지/배포/해결 검증으로 말하지 않는다.
+- reference는 코드 기반 참고 사례, verified는 확인한 해결 근거가 있는 사례다. `.runtime/knowledge_candidates/`는 미검증 후보이며 자동으로 교본에 합치지 않는다.
+- 운영 채팅은 지식으로 BUSINESS_RULES.md의 팀 문의나 사람의 판정을 우회하지 않는다. 상세는 `docs/knowledge-base.md`.

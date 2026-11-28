@@ -129,3 +129,12 @@ python3 xmas_market.py --stream --size 100x30  # 패널용 JSON 프레임 (stdou
 python3 -m unittest discover -s tests -v
 ./market status | python3 -m json.tool | head  # 대시보드가 떠 있을 때
 ```
+
+## 작전 교본 연결
+
+`knowledge.py`는 JSON corpus의 Service/ErrorPattern/FixCase/Rule 참조를 검증하고 메모리에서 검색한다.
+`attach_knowledge`에서 한 번 적재하고 `World.spawn_mouse`에서 대상 repo/service를 좁혀 snapshot을 만든다.
+`Brain.triage` → `Fixer.fix` → `codex_review`에는 같은 snapshot이 전달된다. `knowledge.brief`로 status/history에 출처를 내보낸다.
+수정 worker에서 후보를 `.runtime/knowledge_candidates/`에 원자적으로 저장한다. 후보는 자동 검색하지 않는다.
+Sentry 대표 이벤트 조회는 `SENTRY_EVENT_CONTEXT=on`일 때 수집 worker에서 수행하며 lock 밖에서 네트워크를 기다린다.
+표준 라이브러리만 사용하고 mock 검색의 OpenAI 호출은 0회다. 상세: [knowledge-base.md](knowledge-base.md).

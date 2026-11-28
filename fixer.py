@@ -22,6 +22,8 @@ Codex 리뷰는 한 번에 하나씩, 추론 강도 medium · MCP 서버 없이 
 (평가 중 11건 중 6건이 120초 초과) 시간 제한 + 1회 재시도를 둔다.
 """
 import difflib
+import copy
+import hashlib
 import json
 import os
 import re
@@ -32,6 +34,7 @@ import threading
 import time
 
 import rules
+import knowledge
 
 FIX_SCHEMA = {
     "type": "object",
@@ -138,6 +141,9 @@ def _codex_review_once(issue, f, diff, repo, run, timeout):
             prompt = REVIEW_PROMPT % (f, issue["id"], issue["title"], issue.get("culprit") or "-", diff)
             if issue.get("rule_notes"):  # 비즈니스 규칙: 어기는 변경이면 reject
                 prompt += ("\n--- 지켜야 할 비즈니스 규칙 (어기는 변경이면 reject) ---\n%s\n" % issue["rule_notes"])
+            prompt += knowledge.notes(issue.get("knowledge"))
+            if issue.get("event_context"):
+                prompt += "\n대표 이벤트: " + json.dumps(issue["event_context"], ensure_ascii=False)
             r = run(["codex", "exec", "--skip-git-repo-check", "--ephemeral", "-s", "read-only", "-C", repo,
                      "-c", 'model_reasoning_effort="medium"', "-c", "mcp_servers={}",
                      "--output-schema", schema, "-o", out, prompt],
@@ -238,7 +244,7 @@ class Fixer:
                 self.results.append((ctx, None, RuntimeError("이번 실행의 PR 한도(%d개)에 닿음" % self.max_prs)))
                 return
             self.busy.add(key)
-        threading.Thread(target=self._work, args=(issue, ctx), daemon=True).start()
+        threading.Thread(target=self._work, args=(copy.deepcopy(issue), ctx), daemon=True).start()
 
     def poll(self):
         with _lock:
@@ -272,11 +278,36 @@ class Fixer:
         return out
 
     def fix(self, issue):
+        """선택한 지식 snapshot을 끝까지 보존하고, 성공/실패 모두 미검증 후보로 남긴다."""
+        issue = copy.deepcopy(issue)
+        attempt = {}
+        try:
+            res = self._fix(issue, attempt)
+        except Exception as e:
+            self._record_candidate(issue, "failed", attempt, error=e)
+            raise
+        res = dict(res, knowledge=knowledge.brief(issue.get("knowledge")), resolution_status="pr-open")
+        path = self._record_candidate(issue, "pr-open", attempt, res)
+        if path:
+            res["knowledge_candidate"] = path
+        return res
+
+    def _record_candidate(self, issue, outcome, attempt, result=None, error=None):
+        try:
+            return knowledge.save_candidate(self.runtime_dir, issue, outcome, attempt, result, error)
+        except (OSError, ValueError, TypeError):
+            return None  # 기록 실패 때문에 이미 열린 PR을 실패로 보고 중복 생성하지 않는다
+
+    def _fix(self, issue, attempt):
         src = self.sources()
+        attempt["source_hashes"] = {f: hashlib.sha256(body.encode()).hexdigest() for f, body in src.items()}
         user = "Sentry 이슈 %s\n제목: %s\n위치: %s\n" % (issue["id"], issue["title"], issue.get("culprit") or "-")
         if issue.get("rule_notes"):  # 걸린 비즈니스 규칙 (없으면 예전과 같은 입력)
             user += "지켜야 할 비즈니스 규칙 (어기는 수정은 만들지 않는다):\n%s\n" % issue["rule_notes"]
         user += "\n"
+        user += knowledge.notes(issue.get("knowledge"))
+        if issue.get("event_context"):
+            user += "대표 이벤트: " + json.dumps(issue["event_context"], ensure_ascii=False) + "\n"
         user += "\n\n".join("=== %s ===\n%s" % (f, body) for f, body in src.items())
         p = self.ask(FIX_PROMPT, user, "sentry_fix", FIX_SCHEMA)
         f = p.get("file", "")
@@ -287,6 +318,7 @@ class Fixer:
         if not title.startswith("fix"):
             title = "fix: " + title
         diff = "".join(difflib.unified_diff(src[f].splitlines(True), new.splitlines(True), "a/" + f, "b/" + f))
+        attempt.update(file=f, diff=diff, proposed_explanation=p.get("explanation", ""))
         if self.rules and not issue.get("ask_ok"):  # 패치가 '문의' 규칙에 걸리는 곳을 바꾸면 PR 대신 팀에 묻는다
             # diff 에는 앞뒤 3줄만 있어 긴 함수 중간을 고치면 함수 이름이 안 보인다: 바뀐 곳을 감싼 함수 정의 줄도 같이 본다
             hit = rules.blocking(rules.match_patch(self.rules, f, diff + "\n" + enclosing_def(src[f], p.get("find", ""))))
@@ -296,6 +328,7 @@ class Fixer:
         if self.review is not None:
             try:
                 rv = self.review(issue, f, diff, self.repo)
+                attempt["review"] = rv
             except Exception as e:  # noqa: BLE001 — 검토하지 못한 수정은 PR 로 올리지 않는다
                 raise ReviewRejected("Codex 리뷰를 못 함 (%s)" % str(e)[:80])
             if rv["verdict"] != "approve":
@@ -306,7 +339,7 @@ class Fixer:
             rules_line = "📜 **비즈니스 규칙**%s\n%s\n\n" % (" (담당 팀 확인 후 진행)" if issue.get("ask_ok") else "",
                                                       issue["rule_notes"])
         body = ("Sentry 이슈 **%s** — `%s`\n\n%s\n\n" % (issue["id"], issue["title"], (p.get("explanation") or "").strip())
-                + review_line + rules_line
+                + review_line + rules_line + knowledge.markdown(issue.get("knowledge"))
                 + ("Sentry: %s\n\n" % issue["url"] if issue.get("url") else "")
                 + "---\n이 PR 은 MERRY BUGMAS 대시보드의 병정(sentry-bot)이 OpenAI API 로 만들고"
                 + (" Codex 가 리뷰한" if rv else "") + " 자동 수정이다. 사람이 리뷰한 뒤 머지한다.\n")
