@@ -331,6 +331,15 @@ ISSUE_CATALOG = [
     ("SEARCH", "<obscura:bootstrap> globalThis.fetch override", "needs-human"),
 ]
 KIND_WEIGHTS = {"fixable": 0.55, "noise": 0.25, "needs-human": 0.20}
+# 서버(Python) 에러 mock. 평소 흐름에는 섞지 않고 ./market outbreak N server 로만 나온다 (기존 난수 순서를 지킨다)
+SERVER_CATALOG = [
+    ("KeyError: 'rate'", "fixable"),
+    ("ZeroDivisionError: division by zero", "fixable"),
+    ("TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'", "fixable"),
+    ("sqlite3.OperationalError: database is locked", "needs-human"),
+    ("ConnectionRefusedError: [Errno 61] Connection refused", "needs-human"),
+    ("BrokenPipeError: [Errno 32] Broken pipe", "noise"),
+]
 
 
 class MockSource:
@@ -367,6 +376,19 @@ class MockSource:
             "id": "%s-%s" % (proj, base36(self.seq)),
             "title": title,
             "kind": kind,
+            "layer": "front",
+            "review_block": kind == "fixable" and R.random() < 0.15,
+        }
+
+    def make_server_issue(self, service=None):
+        """서버(Python) 에러 mock 이슈 하나."""
+        title, kind = R.choice(SERVER_CATALOG)
+        self.seq += R.randint(1, 9)
+        return {
+            "id": "%s-%s" % (service if service and service != "ALL" else "WEB", base36(self.seq)),
+            "title": title,
+            "kind": kind,
+            "layer": "server",
             "review_block": kind == "fixable" and R.random() < 0.15,
         }
 
@@ -878,7 +900,8 @@ class World:
                              "outcome": outcome, "soldier": s.idx + 1, "mr": mr, "t": self.t,
                              "pr": pr["pr"] if pr else None, "url": pr["url"] if pr else None,
                              "note": (pr["title"] if pr else None) or m.issue.get("fix") or m.issue.get("note") or "",
-                             "rules": m.issue.get("rules") or [], "question": m.issue.get("question", "")})
+                             "rules": m.issue.get("rules") or [], "question": m.issue.get("question", ""),
+                             "layer": m.issue.get("layer", "front")})
         self.history = self.history[-300:]
 
     def open_history(self, iid=None):
@@ -919,7 +942,8 @@ class World:
             "soldiers": [{"id": s.idx + 1, "name": s.name, "state": s.state, "off": s.off,
                           "target": s.target.issue["id"] if s.target else None} for s in self.soldiers],
             "mice": [{"id": m.issue["id"], "title": m.issue["title"], "kind": kind_word(m.issue), "state": m.state,
-                      "age_s": round(self.t - m.issue.get("born_t", self.t)), "ask": bool(m.issue.get("ask")),
+                      "layer": m.issue.get("layer", "front"), "age_s": round(self.t - m.issue.get("born_t", self.t)),
+                      "ask": bool(m.issue.get("ask")),
                       "chasedBy": None if m.claimed is None else m.claimed + 1}
                      for m in self.mice if m.state in ("roam", "held", "caged")],
             # 질문에 답할 수 있게: 처리한 쥐 기록(최근 15건)과 누적 통계
@@ -1108,8 +1132,8 @@ class World:
         issue.setdefault("born_t", self.t)
         if self.ai is not None:  # mock 판정 대신 AI 가 제목을 보고 판정한다 (오기 전까지 병정은 트리아지에서 기다림)
             issue["ai"] = "pending"
-            self.ai.submit("triage", {"id": issue["id"], "title": issue["title"], "service": self.svc_key},
-                           (self.stage_gen, issue))
+            self.ai.submit("triage", {"id": issue["id"], "title": issue["title"], "service": self.svc_key,
+                                      "layer": issue.get("layer", "front")}, (self.stage_gen, issue))
         self.mice.append(Mouse(self, issue))
         if self.view == "traffic":
             self.unseen += 1
@@ -1148,9 +1172,14 @@ class World:
         if len(self.mice) > n:
             self.log("Sentry 신규 이슈 %s" % self.mice[-1].issue["id"], 203)
 
-    def outbreak(self, n=5):
+    def outbreak(self, n=5, layer="front"):
         if self.live is not None:
             self.log("Sentry 실연동 중 - 가짜 쥐는 만들지 않는다 (실제 미해결 이슈만 나온다)", 245)
+            return
+        if layer == "server":
+            self.log("🖥️ 서버 에러 쥐 떼 출몰! (신규 서버 이슈 %d건)" % n, 203)
+            for _ in range(n):
+                self.spawn_mouse(self.src.make_server_issue(self.svc_key))
             return
         self.log("release-261225 배포 직후 쥐 떼 출몰! (신규 이슈 %d건)" % n, 203)
         for _ in range(n):
@@ -1442,8 +1471,10 @@ class World:
         op, arg = parts[0].lower(), (parts[1] if len(parts) > 1 else "")
         if op in ("spike", "traffic"):
             self.traffic_spike()
-        elif op in ("outbreak", "bugs"):
-            self.outbreak(int(arg) if arg.isdigit() else 5)
+        elif op in ("outbreak", "bugs"):  # outbreak [N] [server]
+            words = arg.lower().split()
+            n = next((int(w) for w in words if w.isdigit()), 5)
+            self.outbreak(n, "server" if any(w in ("server", "서버") for w in words) else "front")
         elif op in ("mouse", "bug"):
             self.spawn_one()
         elif op == "human":
@@ -1507,14 +1538,14 @@ class World:
                         "history_rps": [int(v) for v in self.hist[-20:]]},
             "mice": [{"id": m.issue["id"], "title": m.issue["title"],
                       "kind": "pending" if m.issue.get("ai") == "pending" else m.issue["kind"],
-                      "note": m.issue.get("note", ""),
+                      "note": m.issue.get("note", ""), "layer": m.issue.get("layer", "front"),  # front 브라우저 / server 서버
                       "rules": m.issue.get("rules") or [],  # 걸린 비즈니스 규칙 {id, action 문의/주의, team}
                       "ask": bool(m.issue.get("ask")), "question": m.issue.get("question", ""),  # 팀 문의 중 · 질문 초안
                       "state": m.state, "chasedBy": None if m.claimed is None else m.claimed + 1}
                      for m in self.mice if m.state != "dead"],
             "prs": [dict(v, issue=k) for k, v in (self.fixer.db.items() if self.fixer else [])],
             "history": [{"id": r["id"], "outcome": r["outcome"], "soldier": r["soldier"], "mr": r["mr"],
-                         "pr": r.get("pr"), "url": r.get("url"),
+                         "pr": r.get("pr"), "url": r.get("url"), "layer": r.get("layer", "front"),
                          "title": r["title"], "note": r.get("note", ""),
                          "rules": r.get("rules") or [], "question": r.get("question", "")} for r in self.history[-20:]],
             "soldiers": [{"id": s.idx + 1, "name": s.name, "state": s.state, "off": s.off,

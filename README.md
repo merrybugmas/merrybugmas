@@ -82,6 +82,7 @@ MERRY BUGMAS 는 이 셋을 **한 장면**으로 합친다. 트래픽은 줄, �
 - **팀 문의** — fixable 이어도 비즈니스 규칙(`문의`)에 걸리면 고치지 않고 우리에 둔 채 담당 팀 질문 초안을 남긴다. 팀 확인 뒤 `./market tell 루돌프 <ID> 확인 완료 진행` 으로 다시 고친다 (규칙 표 형식: `rules.py`, 예시: `docs/mock-business-rules.md`)
 - **review block**(약 15%) — 수정 반려. 쥐가 다시 풀려나 다음 런에 재시도
 - 쌓인 쥐가 많으면 병정이 2·3번까지 추가 출동한다
+- 쥐에는 계층(`layer`)이 붙는다: `front` 브라우저 에러 / `server` 서버 에러. mock 서버 쥐는 `./market outbreak 3 server` 로만 나오고, 실연동은 Sentry 이슈의 platform(python 등)으로 가른다 ([demo-web](https://github.com/merrybugmas/demo-web) 의 서버 버그는 `SENTRY_DSN` 으로 같은 프로젝트에 온다)
 
 하늘의 **`📋 잡은 쥐 게시판`** 에는 잡은 쥐가 각각 무슨 버그였는지(결과 · 이슈 ID · 병정 · Sentry 제목) 붙는다.
 화면이 작아 하늘이 좁으면 아래 이슈 목록의 남는 줄에 나온다.

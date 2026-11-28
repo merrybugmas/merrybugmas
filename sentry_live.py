@@ -13,6 +13,9 @@ Sentry 이슈 상태는 그대로다. 트래픽(rps)은 여전히 mock 이다. �
   SENTRY_URL         기본 https://sentry.io (EU 조직은 https://de.sentry.io, 자체 호스팅은 그 주소)
   SENTRY_LIMIT       한 번에 가져올 미해결 이슈 수 (기본 20)
   SENTRY_POLL        다시 읽는 주기, 초 (기본 15)
+
+프론트(브라우저)와 서버 에러가 한 프로젝트에 같이 와도 된다. 이슈의 platform 이 서버 언어(python 등)면
+layer "server", 아니면 "front" 로 표시한다 (demo-web 의 server.py 는 platform python 으로 보낸다).
 """
 import json
 import os
@@ -24,9 +27,12 @@ import urllib.parse
 import urllib.request
 
 NOISE_WORDS = ("extension", "chunkloaderror", "script error", "doubleclick", "googletag", "gtag", "metamask",
-               "resizeobserver", "networkerror", "failed to fetch", "load failed", "third-party")
+               "resizeobserver", "networkerror", "failed to fetch", "load failed", "third-party",
+               "brokenpipe", "connectionreset")  # 서버: 손님이 먼저 연결을 끊음
 HUMAN_WORDS = ("api error", " 500", " 502", " 503", " 504", " 401", " 429", "security policy", "csp",
-               "override", "personal data")
+               "override", "personal data",
+               "connectionrefused", "operationalerror", "database is locked")  # 서버: 외부 서버·DB 장애
+SERVER_PLATFORMS = ("python", "node", "java", "go", "ruby", "php", "csharp", "elixir", "rust")
 
 
 def guess_kind(title):
@@ -37,6 +43,11 @@ def guess_kind(title):
     if any(w in t for w in NOISE_WORDS):
         return "noise"
     return "fixable"
+
+
+def layer_of(row):
+    """Sentry 이슈의 platform 으로 프론트/서버를 가른다. 모르면 front (예전과 같음)."""
+    return "server" if str(row.get("platform") or "").lower() in SERVER_PLATFORMS else "front"
 
 
 def configured():
@@ -50,6 +61,7 @@ def to_issue(row):
         "id": str(row.get("shortId") or row.get("id")),
         "title": title,
         "kind": guess_kind(title),
+        "layer": layer_of(row),
         "review_block": False,
         "live": True,
         "url": row.get("permalink") or "",

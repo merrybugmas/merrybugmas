@@ -13,7 +13,7 @@ case "${1:-help}" in
 ./market start <서비스> [traffic|sentry|overview|agents]   스테이지 시작 (서비스: ALL WEB SEARCH RESUME DISPLAY MOBILE)
 ./market view menu|overview|traffic|sentry|agents   화면 전환 (메뉴 / 개요 / 대기열 / 전투 / 에이전트)
 ./market spike                  트래픽 급증
-./market outbreak [N]           쥐 떼 N마리 (기본 5)
+./market outbreak [N] [server]  쥐 떼 N마리 (기본 5, server 면 서버 에러 쥐)
 ./market mouse                  쥐 1마리
 ./market focus <ISSUE-ID>       병정이 그 쥐부터 처치
 ./market tell <병정> <명령>      병정(서브 에이전트)에게 말로 명령. 병정: 1·2·3·루돌프·진저·호두·모두
