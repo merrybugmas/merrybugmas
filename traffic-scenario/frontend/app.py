@@ -1,3 +1,4 @@
+import math
 import argparse
 import json
 import os
@@ -88,7 +89,34 @@ class TrafficWorld(ui.World):
                     canvas.set(mx + dx, my + dy, 230)
         canvas.set(mx - 1, my - 1, 229)
         canvas.set(mx + 1, my + 1, 229)
+        if self.experiment.celebrating():
+            self.draw_fireworks(canvas)
         return canvas
+
+    # PR 등록을 알리는 폭죽을 엘프 머리 위에서 쏘아 올려 하늘 전체에 표시
+    def draw_fireworks(self, canvas):
+        ex, ey = self.tree_cx - 10, self.guide_top + 2
+        for burst in range(6):
+            # 폭죽마다 시작 시점을 어긋나게 해 번갈아 터지게 함
+            phase = ((self.t + burst * 0.45) % 2.7) / 2.7
+            cx = (burst + 1) * self.w // 7
+            cy = 8 + (burst * 11) % max(6, ey - 18)
+            # 처음에는 엘프 위에서 터질 자리까지 불꽃이 올라감
+            if phase < 0.3:
+                for tail in range(5):
+                    rise = max(0.0, phase / 0.3 - tail * 0.04)
+                    canvas.set(int(ex + (cx - ex) * rise), int(ey + (cy - ey) * rise), 231 if tail == 0 else 226)
+                continue
+            spread = (phase - 0.3) / 0.7
+            radius = 3 + spread * 30
+            for ray in range(24):
+                angle = ray * math.tau / 24
+                color = 231 if spread < 0.12 else ui.LIGHTS[(burst + ray) % len(ui.LIGHTS)]
+                # 끝나 가는 폭죽은 불꽃을 듬성듬성 남겨 사그라드는 모습으로 표시
+                if spread > 0.7 and ray % 2:
+                    continue
+                for step in (1.0, 0.8, 0.6, 0.4):
+                    canvas.set(int(cx + math.cos(angle) * radius * step), int(cy + math.sin(angle) * radius * step), color)
 
     # 대칭 노점과 중앙 트리 및 직원 한 명이 있는 안내소 표시
     def draw_market(self, canvas, top):
@@ -125,7 +153,9 @@ class TrafficWorld(ui.World):
         canvas.rect(x, y + 10, 13, 2, 180)
         sign = '버그마스 마켓 안내소'
         canvas.put(self.tree_cx - ui.dw(sign) // 2, y // 2 - 1, sign, 226, 22, True)
-        canvas.blit(ui.ELF_SPR, x - 5, y + 4, ui.ELF_PAL)
+        # PR이 등록되면 엘프가 제자리에서 뛰어오름
+        hop = 3 if self.experiment.celebrating() and int(self.t * 5) % 2 else 0
+        canvas.blit(ui.ELF_SPR, x - 5, y + 4 - hop, ui.ELF_PAL)
         for person in self.queue:
             px, py = self.qpos(person.d)
             canvas.blit(ui.VISITOR[:4] + (ui.VISITOR_STEP if person.walking else ui.VISITOR[4:]), px, py, person.pal)

@@ -37,7 +37,7 @@ def main():
     cmp_.add_argument("after")
     progress = sub.add_parser("progress")
     progress.add_argument("run_id")
-    progress.add_argument("phase", choices=["idle", "analyzing", "modifying", "restarting", "testing", "comparing", "finished", "failed"])
+    progress.add_argument("phase", choices=["idle", "analyzing", "modifying", "restarting", "testing", "comparing", "finished", "failed", "celebrating"])
     progress.add_argument("message")
     progress.add_argument("--operation", default="agent")
 

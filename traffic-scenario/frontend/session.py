@@ -12,10 +12,12 @@ import urllib.request
 
 PHASES = {'idle': '에이전트 대기', 'analyzing': '원인 조사', 'modifying': '코드 수정',
           'restarting': '서버 재시작', 'testing': '동일 조건 재실험', 'comparing': '전후 비교',
-          'finished': '작업 완료', 'failed': '작업 확인 필요'}
+          'finished': '작업 완료', 'failed': '작업 확인 필요', 'celebrating': 'PR 등록 완료'}
 STATES = {'received': '접수', 'queued': '대기', 'processing': '안내 중', 'succeeded': '완료',
           'failed': '실패', 'cancelled': '취소', 'success': '완료', 'http_error': '요청 거절',
           'timeout': '시간 초과', 'connection_error': '연결 오류'}
+# PR 등록 축하 연출을 보여 주는 시간(초)
+CELEBRATION_S = 15
 CATEGORIES = {'cookie': '쿠키', 'gift': '선물', 'ornament': '장식', 'hot_choco': '핫초코', 'toy': '장난감'}
 LIMITS = Path(__file__).resolve().parents[1] / 'agent_bridge' / 'limits.json'
 
@@ -59,6 +61,7 @@ class Session:
         self.error = None
         self.busy = False
         self.agent = '왼쪽 Codex에서 개선을 요청하면 진행 단계를 표시합니다.'
+        self.celebrate_until = 0.0
         self.lines = []
         self.line_seq = self.drawn_line = 0
         self.characters = {}
@@ -237,6 +240,8 @@ class Session:
                     self.requests[rid] = request
                 elif kind == 'agent.progress':
                     self.agent = PHASES[data['phase']] + ': ' + data['message']
+                    if data['phase'] == 'celebrating':
+                        self.celebrate_until = time.monotonic() + CELEBRATION_S
                 elif kind == 'log' and data['source'] != 'target':
                     self.line_seq += 1
                     self.lines.append((self.line_seq, data['message']))
@@ -271,6 +276,10 @@ class Session:
                 self.message = f"{label} — 완료 {counts['success']}건 / 실패 {counts['failed']}건 / 미전송 {counts['dropped']}건"
             self.baseline = self.baseline or snapshot['source_run_id']
             self.detail = detail
+
+    # PR 등록 축하 연출을 보여 줄 시간인지 확인
+    def celebrating(self):
+        return time.monotonic() < self.celebrate_until
 
     # 기존 마켓 상태에 실험 정보 추가
     def status(self):

@@ -16,7 +16,10 @@ ALLOWED = {"snapshot", "adopt", "replay", "run", "verify", "status", "logs", "sc
 
 # 명령 하나를 심판 폴더에서 실행
 def execute(argv):
-    if not isinstance(argv, list) or not argv or argv[0] not in ALLOWED or not all(isinstance(a, str) for a in argv):
+    # 축하 단계는 PR이 실제로 올라갔을 때 실행 쪽만 보낼 수 있음
+    forged = isinstance(argv, list) and argv[:1] == ["progress"] and "celebrating" in argv
+
+    if not isinstance(argv, list) or not argv or argv[0] not in ALLOWED or not all(isinstance(a, str) for a in argv) or forged:
         return {"output": json.dumps({"error": "COMMAND_NOT_ALLOWED", "allowed": sorted(ALLOWED)}, ensure_ascii=False) + "\n", "code": 2}
 
     done = subprocess.run([sys.executable, "-B", "-m", "agent_bridge", *argv], cwd=ROOT, capture_output=True, text=True)

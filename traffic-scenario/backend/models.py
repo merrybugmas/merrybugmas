@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 ID = Annotated[str, Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")]
 Category = Literal["cookie", "gift", "ornament", "hot_choco", "toy"]
-Phase = Literal["idle", "analyzing", "modifying", "restarting", "testing", "comparing", "finished", "failed"]
+Phase = Literal["idle", "analyzing", "modifying", "restarting", "testing", "comparing", "finished", "failed", "celebrating"]
 Outcome = Literal["success", "http_error", "timeout", "connection_error", "cancelled"]
 
 

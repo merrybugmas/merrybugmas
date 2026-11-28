@@ -77,7 +77,11 @@ def repair(data_dir, control, confirm=False, draft=True, agent=True, model="gpt-
     # 시험 환경의 작업 폴더에서 바뀐 내용만 뽑아 PR로 올림
     diff = subprocess.run(["git", "diff", "HEAD", "--", *publish.FILES], cwd=Path(result["workspace"]).parent, capture_output=True, text=True, check=True).stdout
     out["pr"] = publish.publish(Path(result["judge"]) / "data", confirm, draft, diff=diff)
-    notify("finished", "채택된 수정을 PR로 올렸습니다. 병합은 사람이 합니다." if out["pr"].get("published") else "채택된 수정의 PR 내용을 준비했습니다. 운영 서버는 바뀌지 않았습니다.")
+    # PR이 실제로 올라갔을 때만 화면에 축하 연출을 띄움
+    if out["pr"].get("published"):
+        notify("celebrating", "시험 서버 검증을 통과한 수정을 PR로 올렸습니다. 병합은 사람이 합니다.")
+    else:
+        notify("finished", "채택된 수정의 PR 내용을 준비했습니다. 운영 서버는 바뀌지 않았습니다.")
 
     return out
 

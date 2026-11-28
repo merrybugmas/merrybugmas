@@ -81,7 +81,7 @@ def test_judge_only_runs_agent_commands(monkeypatch):
     ran = []
     monkeypatch.setattr(judge.subprocess, "run", lambda cmd, **kw: ran.append(cmd) or type("Done", (), {"stdout": "{}", "stderr": "", "returncode": 0})())
 
-    for argv in (["scenario", "c"], ["surge"], [], "adopt", ["adopt", 1]):
+    for argv in (["scenario", "c"], ["surge"], [], "adopt", ["adopt", 1], ["progress", "r", "celebrating", "x"]):
         assert judge.execute(argv)["code"] == 2
 
     assert not ran and judge.execute(["adopt"])["code"] == 0 and ran[0][-1] == "adopt"

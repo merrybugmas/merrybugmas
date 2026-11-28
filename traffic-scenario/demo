@@ -27,6 +27,9 @@ case "${1:-help}" in
     # 채택된 수정을 PR로 올린다. --publish가 없으면 올릴 내용만 보여 준다
     "$PYTHON" -B -m agent_bridge pr "${@:2}"
     ;;
+  celebrate)
+    "$PYTHON" -B -m evals.celebrate
+    ;;
   test)
     "$PYTHON" -B -m pytest -q -p no:cacheprovider
     ;;
@@ -35,6 +38,7 @@ case "${1:-help}" in
     echo './demo surge   켜져 있는 화면에 무작위 고객 급증을 보낸다'
     echo './demo codex   시험 서버를 따로 켜서 Codex가 고치게 하고 PR 내용을 준비한다 (유료). --publish를 붙이면 초안 PR로 올린다'
     echo './demo pr      채택된 수정으로 올릴 PR 내용을 보여 준다. --publish를 붙이면 실제로 올리고 --draft를 함께 붙이면 초안으로 올린다'
+    echo './demo celebrate  화면의 축하 연출만 미리 본다'
     echo './demo test    테스트를 실행한다'
     ;;
 esac

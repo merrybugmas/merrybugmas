@@ -637,6 +637,21 @@ class TrafficFrontendTests(unittest.TestCase):
         session.execute(['normal'])
         self.assertEqual((calls[-1]['request_count'], calls[-1]['arrival_duration_s'], calls[-1]['seed']), (1000, 30, 42))
 
+    # PR 등록 단계가 오면 폭죽과 엘프 연출을 일정 시간 표시
+    def test_celebrating_phase_shows_fireworks_for_a_while(self):
+        session = Session('http://127.0.0.1:8000')
+        world = TrafficWorld(session)
+        world.update(.1)
+        calm = '\n'.join(compose(world, 180, 45))
+        self.assertFalse(session.celebrating())
+        session.apply([{'type': 'agent.progress', 'data': {'phase': 'celebrating', 'message': 'PR 등록'}}])
+        self.assertTrue(session.celebrating())
+        self.assertIn('PR 등록 완료', session.status()['agent'])
+        world.update(.4)
+        self.assertNotEqual(calm, '\n'.join(compose(world, 180, 45)))
+        session.celebrate_until = 0
+        self.assertFalse(session.celebrating())
+
 
 if __name__ == '__main__':
     unittest.main()
