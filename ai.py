@@ -29,7 +29,7 @@ import urllib.request
 DEFAULT_MODEL = "gpt-5-mini"
 
 KINDS = ["fixable", "noise", "needs-human"]
-INTENTS = ["catch", "noise", "human", "rest", "go", "report", "answer", "unknown"]
+INTENTS = ["catch", "noise", "human", "proceed", "rest", "go", "report", "answer", "unknown"]
 
 ORDER_SCHEMA = {
     "type": "object",
@@ -97,16 +97,18 @@ intent:
   catch  = 그 쥐(이슈)를 잡아 고쳐라 / 먼저 처리해라
   noise  = 그 쥐는 noise 다, 쫓아내라
   human  = 그 쥐는 사람(담당자)에게 넘겨라
+  proceed = 팀 문의(mice 의 ask: true)로 멈춘 쥐를, 담당 팀 확인이 끝났으니 고쳐라 ("정산팀 확인 완료, 진행해")
+            사람이 팀 확인을 마쳤다고 분명히 말했을 때만 고른다. 확인했다는 말이 없으면 proceed 가 아니다
   rest   = 복귀·대기·쉬어라
   go     = 출동·재개해라
   report = 지금 뭐 하는지 보고해라
   answer = 질문이다 ("가장 큰 에러가 뭐였어?", "몇 마리 잡았어?", "PR 뭐 올렸어?" 등). 상황 JSON 으로 답한다
   unknown = 위에 해당하지 않음 (인사·칭찬·잡담 등)
-issue_id: catch/noise/human 이면 상황의 mice 중 하나의 id 를 그대로 쓴다.
+issue_id: catch/noise/human/proceed 이면 상황의 mice 중 하나의 id 를 그대로 쓴다.
   "제일 오래된 쥐", "검색 쪽 503 에러", "null 에러 난 거"처럼 묘사로 가리키면 mice 의 title·age_s·state 로 골라낸다.
   가리키는 쥐가 없으면 "".
 reply: 병정이 할 짧은 대답(한국어, 씩씩한 병정 말투). 보통 40자 이내.
-  intent 가 answer 면 상황의 history(처리한 쥐: outcome fixed=고침 / noise=쫓아냄 / human=담당자에게 넘김,
+  intent 가 answer 면 상황의 history(처리한 쥐: outcome fixed=고침 / noise=쫓아냄 / human=담당자에게 넘김 / ask=비즈니스 규칙 때문에 담당 팀에 문의 중,
   pr 은 실제로 연 GitHub PR 번호)·stats·mice 를 근거로 사람에게 말하듯 1~2문장, 80자 이내로 답한다.
   - 필드 이름(history, stats, fixed, mice 등)이나 JSON 을 그대로 읽지 말고 우리말로 풀어 쓴다
   - 에러는 제목을 통째로 읽지 말고 무엇이 문제인지 짧게 (예: "결제 확인 API 500 에러")
@@ -126,7 +128,7 @@ fix: fixable 이면 MR 제목으로 쓸 수정 요약 (한국어, 30자 이내).
 """
 
 REPORT_PROMPT = """너는 장애 대응이 끝난 뒤 사후 보고서(포스트모템) 초안을 쓰는 운영 담당이다.
-입력 JSON 은 대시보드가 기록한 사실뿐이다: history(처리한 Sentry 이슈: outcome fixed/noise/human, 판정 근거 note, PR),
+입력 JSON 은 대시보드가 기록한 사실뿐이다: history(처리한 Sentry 이슈: outcome fixed/noise/human/ask(비즈니스 규칙으로 팀 문의), 판정 근거 note, PR),
 prs(병정이 연 PR 과 Codex 리뷰 근거), elf_actions(트래픽 대응 레버 조치와 결과), stats, traffic.
 입력에 없는 사실·숫자는 지어내지 않는다. 숫자는 입력에서 그대로 옮긴다.
 title: 보고서 제목 (한국어, 40자 이내)
