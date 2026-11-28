@@ -79,6 +79,7 @@ MERRY BUGMAS 는 이 셋을 **한 장면**으로 합친다. 트래픽은 줄, �
 - **fixable** — 칼싸움(fix) → review → `MR !14xx` 생성. 처치한 쥐는 포물선을 그리며 **뒤쪽 `🏆 잡은 쥐` 우리**로 날아간다
 - **noise** — "shoo!" 하고 쫓아낸다 (레포 밖 출처)
 - **needs-human** — 왼쪽 `HUMAN` 우리에 가두고 담당자 호출
+- **팀 문의** — fixable 이어도 비즈니스 규칙(`문의`)에 걸리면 고치지 않고 우리에 둔 채 담당 팀 질문 초안을 남긴다. 팀 확인 뒤 `./market tell 루돌프 <ID> 확인 완료 진행` 으로 다시 고친다 (규칙 표 형식: `rules.py`, 예시: `docs/mock-business-rules.md`)
 - **review block**(약 15%) — 수정 반려. 쥐가 다시 풀려나 다음 런에 재시도
 - 쌓인 쥐가 많으면 병정이 2·3번까지 추가 출동한다
 - 쥐에는 계층(`layer`)이 붙는다: `front` 브라우저 에러 / `server` 서버 에러. mock 서버 쥐는 `./market outbreak 3 server` 로만 나오고, 실연동은 Sentry 이슈의 platform(python 등)으로 가른다 ([demo-web](https://github.com/merrybugmas/demo-web) 의 서버 버그는 `SENTRY_DSN` 으로 같은 프로젝트에 온다)
@@ -240,6 +241,7 @@ fixable 판정 → OpenAI 가 레포 소스(XMAS_FIX_FILES, 기본 app.js·serve
 - **머지는 사람이 한다.** 기본 브랜치에 직접 푸시하지 않고, 쓰고 있는 체크아웃도 건드리지 않는다
 - 같은 이슈는 PR 을 한 번만 연다 (`.runtime/prs.json`). 한 번 실행에 최대 `XMAS_FIX_MAX`(기본 5)개
 - 고칠 위치를 모르는 이슈(스택이 없는 이벤트)나 패치가 맞지 않으면 MR 을 지어내지 않고 **사람에게 넘긴다** (우리에 가둠)
+- 비즈니스 규칙 표가 있으면, 패치가 `문의` 규칙 대상(파일·함수)을 바꿀 때 리뷰·PR 전에 멈추고 팀 문의로 돌린다. `주의` 규칙은 패치 요청·Codex 리뷰·PR 본문에 같이 넘긴다
 - mock 이슈는 지금처럼 `MR !14xx` 연출이다. 실제 PR 은 실연동 이슈에만 열린다
 - 필요: `git`, `gh`(로그인), 대상 레포 push 권한, 실제 OpenAI API (`--replay`·`--no-ai` 에서는 꺼진다). Codex 리뷰는 `codex` CLI(로그인)가 있으면 켜진다 (`XMAS_FIX_REVIEW=off` 로 끔). Codex 가 90초 안에 답하지 않으면 한 번 더 묻고, 그래도 실패하면 **검토하지 못한 수정은 올리지 않고** 사람에게 넘긴다. 리뷰는 한 번에 하나씩, 추론 강도 medium · MCP 없이 돈다
 
