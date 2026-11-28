@@ -44,7 +44,7 @@ def notifier(control, run_id):
 
 
 # 시험 환경에서 고치고 채택된 수정의 PR 준비
-def repair(data_dir, control, confirm=False, draft=True, agent=True, model="gpt-6.2-sol", effort="medium", timeout=900):
+def repair(data_dir, control, confirm=False, draft=True, agent=True, model="gpt-6.2-sol", effort="medium", timeout=1800):
     run_id, config = latest_run(data_dir)
     notify = notifier(control, run_id)
     notify("analyzing", "운영 서버는 그대로 두고 시험 서버를 따로 준비합니다.")
@@ -75,7 +75,7 @@ if __name__ == "__main__":
     p.add_argument("--skip-agent", action="store_true")
     p.add_argument("--model", default=os.getenv("CODEX_MODEL", "gpt-6.2-sol"))
     p.add_argument("--effort", default=os.getenv("CODEX_EFFORT", "medium"))
-    p.add_argument("--timeout", type=int, default=900)
+    p.add_argument("--timeout", type=int, default=1800)
     args = p.parse_args()
     data = Path(os.getenv("MBM_DATA_DIR", ROOT / "data")).resolve()
     control = os.getenv("MBM_CONTROL_URL", "http://127.0.0.1:8000")

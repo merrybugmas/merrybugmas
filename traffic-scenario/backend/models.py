@@ -33,7 +33,7 @@ class SearchResponse(Model):
 
 class StartRun(Model):
     scenario_id: Literal["normal", "surge"] | None = None
-    request_count: Annotated[int, Field(ge=1, le=1000)] = 1000
+    request_count: Annotated[int, Field(ge=1, le=8000)] = 1000
     arrival_duration_s: Annotated[float, Field(gt=0)] | None = None
     seed: Annotated[int, Field(ge=0)] = 42
     client_timeout_ms: Annotated[int, Field(ge=1, le=60000)] | None = None

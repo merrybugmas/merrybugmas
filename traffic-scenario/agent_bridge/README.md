@@ -357,8 +357,8 @@ flowchart TD
 
 | 키 | 값 | 용도 |
 |---|---|---|
-| `request_count` | 600~1000 | `surge`와 `run --random`이 고르는 요청 수 범위 |
-| `rate_per_s` | 70~150 | 초당 요청 수 범위. 유입 시간은 요청 수를 이 값으로 나눠 정한다 |
+| `request_count` | 5400~6600 | `surge`와 `run --random`이 고르는 요청 수 범위 |
+| `rate_per_s` | 90~110 | 초당 요청 수 범위. 유입 시간은 요청 수를 이 값으로 나눠 정하고 49~73초가 된다 |
 | `client_timeout_ms` | 5000 | `run`이 보내는 대기 한도 |
 | `goal_success_rate` | 0.99 | 고객 목표 |
 | `max_send_lag_p95_ms` | 200 | 전송 지연 허용값 |

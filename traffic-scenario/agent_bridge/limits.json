@@ -1,6 +1,6 @@
 {
-  "request_count": [600, 1000],
-  "rate_per_s": [70, 150],
+  "request_count": [5400, 6600],
+  "rate_per_s": [90, 110],
   "client_timeout_ms": 5000,
   "goal_success_rate": 0.99,
   "max_send_lag_p95_ms": 200,

@@ -23,7 +23,7 @@ def test_all_spreadsheet_endpoints_have_response_schemas(seeded):
 @pytest.mark.parametrize('data',[
  {'source_run_id':'run','seed':42},
  {'scenario_id':'surge','arrival_duration_s':0,'client_timeout_ms':5000},
- {'scenario_id':'surge','arrival_duration_s':1,'client_timeout_ms':5000,'request_count':1001},
+ {'scenario_id':'surge','arrival_duration_s':1,'client_timeout_ms':5000,'request_count':8001},
  {'scenario_id':'surge','arrival_duration_s':1,'client_timeout_ms':5000,'arbitrary_command':'rm'},
 ])
 def test_start_rejects_invalid_contract_inputs(data):

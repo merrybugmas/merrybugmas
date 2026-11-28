@@ -144,7 +144,7 @@ class TrafficFrontendTests(unittest.TestCase):
 
         session = Session('http://127.0.0.1:8000', transport=api)
         with self.assertRaises(ValueError):
-            session.execute(['surge', '1001'])
+            session.execute(['surge', '8001'])
         session.execute(['surge', '1000', '.5'])
         self.assertEqual(calls[0][2]['arrival_duration_s'], .5)
         self.assertEqual(calls[0][2]['seed'], 42)

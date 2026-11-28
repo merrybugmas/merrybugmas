@@ -173,8 +173,8 @@ class Session:
                     # 조건을 지정하지 않은 고객 급증은 부하 실행기가 밀리지 않는 범위에서 매번 다르게 보냄
                     if action == 'surge' and not args:
                         count, duration, seed = surge_condition()
-                    if not 1 <= count <= 1000 or not 0 < duration <= 3600:
-                        raise ValueError('고객 1~1000명과 유입 시간 0초 초과 3600초 이하를 입력하세요.')
+                    if not 1 <= count <= 8000 or not 0 < duration <= 3600:
+                        raise ValueError('고객 1~8000명과 유입 시간 0초 초과 3600초 이하를 입력하세요.')
                     body = {'scenario_id': action, 'request_count': count, 'arrival_duration_s': duration,
                             'seed': seed, 'client_timeout_ms': 5000}
             value = self.transport('POST', '/api/runs', body)

@@ -61,7 +61,7 @@ def free_ports(start=18200):
 
 
 # 평가 한 번 실행
-def run_once(state, dest, catalog, rules="study", effort="medium", timeout=900, port=None, seed=None, agent=True, model="gpt-6.2-sol",
+def run_once(state, dest, catalog, rules="study", effort="medium", timeout=1800, port=None, seed=None, agent=True, model="gpt-6.2-sol",
              load=None, strip=True, notify=None):
     port = port or free_ports()
     notify = notify or (lambda phase, message: None)
@@ -142,7 +142,7 @@ if __name__ == "__main__":
     p.add_argument("--rules", choices=["study", "baseline"], default="study")
     p.add_argument("--model", default="gpt-6.2-sol")
     p.add_argument("--effort", default="medium")
-    p.add_argument("--timeout", type=int, default=900)
+    p.add_argument("--timeout", type=int, default=1800)
     p.add_argument("--port", type=int)
     p.add_argument("--seed", type=int)
     p.add_argument("--skip-agent", action="store_true")
