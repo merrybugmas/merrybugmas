@@ -2,7 +2,7 @@
 """병정의 두뇌 — OpenAI API (Responses API + structured output).
 
   order  : 채팅 명령 한 줄 → {병정, 행동, 이슈 ID, 대답}   (키워드에 없는 말도 알아듣는다)
-  triage : Sentry 이슈 제목 → {fixable / noise / needs-human, 판정 근거, 수정 요약}
+  triage : Sentry 이슈 제목 (+ 있으면 스택 프레임) → {fixable / noise / needs-human, 판정 근거, 수정 요약}
   brief  : 대시보드 현황 JSON → 운영 브리핑 3줄 + 권고 1줄
   traffic: 트래픽 지표·레버 상태 → 엘프가 당길 레버 하나와 근거 (트래픽 대응 에이전트, 경보 때만 1회)
 
@@ -121,9 +121,28 @@ kind:
   fixable     = 우리 레포 코드의 버그라서 코드 수정 MR 로 고칠 수 있다 (타입 오류, null 접근, 미지원 API 사용 등)
   noise       = 레포 밖 출처라 고칠 게 없다 (브라우저 확장, 광고·서드파티 스크립트, 배포 직후 청크 로딩 실패 같은 일시적 네트워크 오류)
   needs-human = 백엔드 장애·보안·인프라·정책 판단이 필요해 사람이 봐야 한다 (5xx API 오류, 보안 정책 위반, 런타임 변조 등)
+에러 위치(스택)가 주어지면 제목과 함께 근거로 쓴다: 에러가 난 우리 레포 파일·함수·코드 줄을 보고 판단하고,
+  프레임이 브라우저 확장(chrome-extension:// 등)·외부 도메인 스크립트뿐이면 noise 쪽 근거로 본다.
 reason: 판정 근거 (한국어, 35자 이내)
 fix: fixable 이면 MR 제목으로 쓸 수정 요약 (한국어, 30자 이내). 아니면 "".
 """
+
+FRAMES_TEXT_MAX = 600  # 판정 입력에 붙이는 스택 글자 수 상한 (입력 토큰 = 비용)
+
+
+def frames_text(frames, limit=FRAMES_TEXT_MAX):
+    """스택 프레임 [{file, line, function, code}] → 판정 입력용 몇 줄. 에러가 난 곳부터, limit 글자까지."""
+    out, n = [], 0
+    for f in frames or []:
+        line = "  at %s (%s%s)" % (f.get("function") or "?", f.get("file") or "?",
+                                   ":%s" % f["line"] if f.get("line") is not None else "")
+        if f.get("code"):
+            line += "\n     > " + f["code"]
+        if n + len(line) > limit:
+            break
+        out.append(line)
+        n += len(line) + 1
+    return "\n".join(out)
 
 REPORT_PROMPT = """너는 장애 대응이 끝난 뒤 사후 보고서(포스트모템) 초안을 쓰는 운영 담당이다.
 입력 JSON 은 대시보드가 기록한 사실뿐이다: history(처리한 Sentry 이슈: outcome fixed/noise/human, 판정 근거 note, PR),
@@ -277,6 +296,9 @@ class Brain:
 
     def triage(self, p):
         user = "서비스: %s\n이슈 ID: %s\n제목: %s" % (p.get("service") or "-", p["id"], p["title"])
+        stack = frames_text(p.get("frames"))
+        if stack:  # 스택이 없으면 예전과 똑같은 입력 (제목만)
+            user += "\n에러 위치 (스택, 에러가 난 곳부터):\n" + stack
         r = self.ask(TRIAGE_PROMPT, user, "sentry_triage", TRIAGE_SCHEMA)
         kind = _choice(r.get("kind"), KINDS, "kind")
         return {"kind": kind, "reason": _str(r.get("reason")), "fix": _str(r.get("fix")) if kind == "fixable" else ""}

@@ -125,6 +125,15 @@ def _codex_review_once(issue, f, diff, repo, run, timeout):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+def frames_lines(frames, limit=3):
+    """스택 프레임 [{file, line, function, code}] → 패치 요청에 붙일 줄들 (에러가 난 곳부터 limit 개)."""
+    out = []
+    for f in (frames or [])[:limit]:
+        at = "%s%s" % (f.get("file") or "?", ":%s" % f["line"] if f.get("line") is not None else "")
+        out.append("  %s in %s%s" % (at, f.get("function") or "?", ("  > " + f["code"]) if f.get("code") else ""))
+    return "\n".join(out)
+
+
 def configured():
     repo = os.environ.get("XMAS_FIX_REPO", "").strip()
     return bool(repo) and os.path.isdir(os.path.join(repo, ".git"))
@@ -244,7 +253,11 @@ class Fixer:
 
     def fix(self, issue):
         src = self.sources()
-        user = "Sentry 이슈 %s\n제목: %s\n위치: %s\n\n" % (issue["id"], issue["title"], issue.get("culprit") or "-")
+        user = "Sentry 이슈 %s\n제목: %s\n위치: %s\n" % (issue["id"], issue["title"], issue.get("culprit") or "-")
+        stack = frames_lines(issue.get("frames"))
+        if stack:  # 스택이 있으면 에러가 난 파일·줄·코드를 같이 준다 (없으면 예전과 같은 입력)
+            user += "스택 (에러가 난 곳부터):\n%s\n" % stack
+        user += "\n"
         user += "\n\n".join("=== %s ===\n%s" % (f, body) for f, body in src.items())
         p = self.ask(FIX_PROMPT, user, "sentry_fix", FIX_SCHEMA)
         f = p.get("file", "")

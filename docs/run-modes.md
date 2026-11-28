@@ -51,6 +51,7 @@
 | `OPENAI_API_KEY` · `XMAS_AI_MODEL`(gpt-5-mini) · `XMAS_AI_EFFORT`(low) · `XMAS_AI=off` | OpenAI |
 | `XMAS_AI_TRAFFIC_MAX` (5) | 엘프가 한 번 실행에 OpenAI 에 물을 최대 횟수 |
 | `SENTRY_AUTH_TOKEN` · `SENTRY_ORG` · `SENTRY_PROJECT` (+ `SENTRY_URL` · `SENTRY_LIMIT` · `SENTRY_POLL`) | Sentry 실연동 (읽기 전용) |
+| `SENTRY_STACK`(on) · `SENTRY_STACK_TIMEOUT`(3) | 새 이슈마다 최신 이벤트를 1회 더 읽어 스택 프레임을 붙인다(Sentry 읽기만, OpenAI 호출 수는 그대로). 판정·패치 요청에 스택이 붙어 입력이 최대 약 600자 늘어난다. 한 번 읽을 때 스택에 쓰는 시간은 합계 8초까지, 넘거나 실패하면 제목만. `off` 로 끔 |
 | `TRAFFIC_METRICS_URL` (+ `TRAFFIC_METRIC` · `TRAFFIC_PEAK`(100) · `TRAFFIC_POLL`(1)) | 트래픽 실연동 |
 | `TRAFFIC_ADMIN_URL` | 엘프 레버 주소 (없으면 `TRAFFIC_METRICS_URL` 의 경로를 `/admin/levers` 로) |
 | `XMAS_FIX_REPO` · `XMAS_FIX_MAX` | 병정의 실제 수정 PR (`--live` + OpenAI 필요) |

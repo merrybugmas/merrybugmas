@@ -8,7 +8,7 @@
 
 ## 현황 읽기
 - `./market status` — 1초마다 갱신되는 JSON. `phase`(intro/menu/play), `service`(지금 스테이지 서비스),
-  `traffic`(rps·peak_rps·queue 대기열 인원·queue_offscreen 화면 밖 인원·admitted 계산 완료 누적·인파 단계·최근 rps), `mice`(이슈 id·제목·판정·상태),
+  `traffic`(rps·peak_rps·queue 대기열 인원·queue_offscreen 화면 밖 인원·admitted 계산 완료 누적·인파 단계·최근 rps), `mice`(이슈 id·제목·판정·상태·frames 스택),
   `soldiers`(병정 번호·이름·상태·추적 중인 이슈·off 복귀 명령·handled 처리 건수), `history`(잡은 쥐 기록), `stats`(MR 수·noise·human·block), `log`(최근 로그)
 - 쥐 상태: `roam` 돌아다님 / `held` 병정에게 잡힘 / `caged` needs-human 대기 / `flee` noise로 쫓겨남
 - `live.on` 이 true 면 쥐는 mock 이 아니라 실제 Sentry 미해결 이슈다 (`--live`, 읽기 전용). 이때 `outbreak`·`mouse` 는 가짜 쥐를 만들지 않는다
@@ -35,6 +35,8 @@
 
 - AI 병정: 대시보드에 `OPENAI_API_KEY` 가 있고 `--live`(또는 mock 에서 `--ai`)로 띄웠으면 병정이 OpenAI API 로 문장을 해석하고(묘사로 가리킨 쥐도) 이슈를 판정한다.
   `status` 의 `ai.on` 으로 확인. 판정 근거는 `mice[].note`·`history[].note`, 판정 대기 중인 쥐는 `kind: "pending"`.
+  에러 위치는 `mice[].frames`·`history[].frames` (에러가 난 곳부터 최대 3개, `{file, line, function, code}`. 스택이 없으면 빈 목록).
+  "어디서 터졌어?" → frames[0] 의 파일:줄·함수로 답한다. mock 쥐의 스택은 연출용 가짜다.
   AI 가 켜져 있으면 사용자 말을 굳이 키워드로 바꾸지 말고 `./market tell <문장>` 으로 그대로 넘겨도 된다.
 
 ## 엘프 = 트래픽 대응 에이전트

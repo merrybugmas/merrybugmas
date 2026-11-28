@@ -329,6 +329,32 @@ ISSUE_CATALOG = [
     ("MOBILE", "API Error: 503 /api/member/info", "needs-human"),
     ("SEARCH", "<obscura:bootstrap> globalThis.fetch override", "needs-human"),
 ]
+
+# mock 이슈의 스택 프레임 (연출용 가짜 데이터). 실연동이면 sentry_live 가 실제 최신 이벤트에서 읽는다.
+# 모양은 sentry_live.frames_from_event 와 같다: 에러가 난 곳부터 {file, line, function, code}
+MOCK_FRAMES = {
+    "TypeError: Cannot read properties of undefined (reading 'map')": [
+        {"file": "app.js", "line": 42, "function": "renderGifts", "code": "list.innerHTML = data.items.map(giftRow).join('');"},
+        {"file": "app.js", "line": 31, "function": "loadGifts", "code": "renderGifts(await res.json());"}],
+    "RangeError: Invalid time value": [
+        {"file": "app.js", "line": 67, "function": "showDelivery", "code": "out.textContent = new Date(d.eta).toISOString();"}],
+    "Hydration failed: server/client text mismatch": [
+        {"file": "src/search/ResultCount.tsx", "line": 18, "function": "ResultCount", "code": "return <span>{new Date().toLocaleTimeString()}</span>;"}],
+    "TypeError: e.toSorted is not a function": [
+        {"file": "src/resume/sortCareers.ts", "line": 9, "function": "sortCareers", "code": "return careers.toSorted((a, b) => b.start - a.start);"}],
+    "SecurityError: sessionStorage access denied": [
+        {"file": "src/display/useBanner.ts", "line": 23, "function": "useBanner", "code": "const seen = sessionStorage.getItem('banner-seen');"}],
+    "TypeError: null is not an object (evaluating 'el.scrollTop')": [
+        {"file": "src/mobile/feed/FeedList.tsx", "line": 54, "function": "restoreScroll", "code": "el.scrollTop = saved;"}],
+    "ChunkLoadError: Loading chunk 7967 failed": [
+        {"file": "webpack/runtime/load script", "line": None, "function": "__webpack_require__.l", "code": ""}],
+    "Failed to fetch (ad.doubleclick.net)": [
+        {"file": "https://securepubads.g.doubleclick.net/tag/js/gpt.js", "line": 1, "function": "?", "code": ""}],
+    "MetaMask inpage.js: Object.connect failed": [
+        {"file": "chrome-extension://nkbihfbeogaeaoehlefnkodbefgpgknn/inpage.js", "line": 1, "function": "Object.connect", "code": ""}],
+    "API Error: 503 /api/member/info": [
+        {"file": "src/api/client.ts", "line": 37, "function": "request", "code": "if (!res.ok) throw new Error(`API Error: ${res.status} ${path}`);"}],
+}
 KIND_WEIGHTS = {"fixable": 0.55, "noise": 0.25, "needs-human": 0.20}
 
 
@@ -367,6 +393,7 @@ class MockSource:
             "title": title,
             "kind": kind,
             "review_block": kind == "fixable" and R.random() < 0.15,
+            "frames": [dict(f) for f in MOCK_FRAMES.get(title, [])],  # 난수를 쓰지 않는다 (기존 재현성 유지)
         }
 
 
@@ -811,7 +838,7 @@ class World:
         """실제 Sentry 이슈(--live)이고 수정 레포가 설정돼 있으면 코드 패치 PR 을 만들기 시작한다."""
         if self.fixer is None or not m.issue.get("live") or m.issue.get("pr") is not None:
             return
-        if not m.issue.get("culprit"):  # 스택이 없는 이벤트(직접 넣은 테스트 이벤트 등)는 어디를 고칠지 모른다
+        if not m.issue.get("culprit") and not m.issue.get("frames"):  # 스택이 없는 이벤트(직접 넣은 테스트 이벤트 등)는 어디를 고칠지 모른다
             m.issue["pr"], m.issue["pr_err"] = None, "스택 정보 없음 - 고칠 위치를 모름"
             return
         m.issue["pr"] = "pending"
@@ -839,7 +866,8 @@ class World:
         self.history.append({"id": m.issue["id"], "title": m.issue["title"], "kind": m.issue["kind"],
                              "outcome": outcome, "soldier": s.idx + 1, "mr": mr, "t": self.t,
                              "pr": pr["pr"] if pr else None, "url": pr["url"] if pr else None,
-                             "note": (pr["title"] if pr else None) or m.issue.get("fix") or m.issue.get("note") or ""})
+                             "note": (pr["title"] if pr else None) or m.issue.get("fix") or m.issue.get("note") or "",
+                             "frames": m.issue.get("frames") or []})
         self.history = self.history[-300:]
 
     def open_history(self, iid=None):
@@ -1055,9 +1083,10 @@ class World:
             return  # 실연동 중에는 가짜 쥐를 섞지 않는다
         issue = issue or self.src.make_issue(self.svc_key)
         issue.setdefault("born_t", self.t)
-        if self.ai is not None:  # mock 판정 대신 AI 가 제목을 보고 판정한다 (오기 전까지 병정은 트리아지에서 기다림)
+        if self.ai is not None:  # mock 판정 대신 AI 가 제목(+ 스택)을 보고 판정한다 (오기 전까지 병정은 트리아지에서 기다림)
             issue["ai"] = "pending"
-            self.ai.submit("triage", {"id": issue["id"], "title": issue["title"], "service": self.svc_key},
+            self.ai.submit("triage", {"id": issue["id"], "title": issue["title"], "service": self.svc_key,
+                                      "frames": issue.get("frames") or []},
                            (self.stage_gen, issue))
         self.mice.append(Mouse(self, issue))
         if self.view == "traffic":
@@ -1457,12 +1486,14 @@ class World:
             "mice": [{"id": m.issue["id"], "title": m.issue["title"],
                       "kind": "pending" if m.issue.get("ai") == "pending" else m.issue["kind"],
                       "note": m.issue.get("note", ""),
+                      "frames": (m.issue.get("frames") or [])[:3],  # 스택 프레임 {file, line, function, code}, 에러 난 곳부터
                       "state": m.state, "chasedBy": None if m.claimed is None else m.claimed + 1}
                      for m in self.mice if m.state != "dead"],
             "prs": [dict(v, issue=k) for k, v in (self.fixer.db.items() if self.fixer else [])],
             "history": [{"id": r["id"], "outcome": r["outcome"], "soldier": r["soldier"], "mr": r["mr"],
                          "pr": r.get("pr"), "url": r.get("url"),
-                         "title": r["title"], "note": r.get("note", "")} for r in self.history[-20:]],
+                         "title": r["title"], "note": r.get("note", ""),
+                         "frames": (r.get("frames") or [])[:3]} for r in self.history[-20:]],
             "soldiers": [{"id": s.idx + 1, "name": s.name, "state": s.state, "off": s.off,
                           "handled": sum(1 for r in self.history if r["soldier"] == s.idx + 1),
                           "target": s.target.issue["id"] if s.target else None} for s in self.soldiers],
