@@ -31,6 +31,8 @@ import tempfile
 import threading
 import time
 
+import rules
+
 FIX_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -84,6 +86,30 @@ class ReviewRejected(Exception):
     """Codex 리뷰가 변경을 반려했다 — PR 을 열지 않고 사람에게 넘긴다."""
 
 
+class AskTeam(Exception):
+    """패치가 비즈니스 규칙('문의')에 걸리는 곳을 바꾼다 — PR 을 열지 않고 담당 팀에 묻는다."""
+
+    def __init__(self, hit):
+        super().__init__(", ".join(r["id"] for r in hit))
+        self.rules = hit
+
+
+DEF_RE = re.compile(r"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\b|def\s|class\s"
+                    r"|(?:const|let|var)\s+[\w$]+\s*=\s*(?:async\s*)?(?:function\b|\([^)]*\)\s*=>|[\w$]+\s*=>)"
+                    r"|(?!(?:if|for|while|switch|catch|return)\b)[\w$]+\s*\([^)]*\)\s*\{)")
+
+
+def enclosing_def(text, find, back=200):
+    """find 가 있는 곳 바로 위의 함수 정의 줄 (JS·Python 모양을 대충 본다). 못 찾으면 ""."""
+    at = text.find(find) if find else -1
+    if at < 0:
+        return ""
+    for line in reversed(text[:at].splitlines()[-back:]):
+        if DEF_RE.match(line):
+            return line
+    return ""
+
+
 def review_enabled():
     mode = os.environ.get("XMAS_FIX_REVIEW", "codex").strip().lower()
     return mode not in ("off", "0", "no", "false") and shutil.which("codex") is not None
@@ -110,6 +136,8 @@ def _codex_review_once(issue, f, diff, repo, run, timeout):
             with open(schema, "w", encoding="utf-8") as fh:
                 json.dump(REVIEW_SCHEMA, fh)
             prompt = REVIEW_PROMPT % (f, issue["id"], issue["title"], issue.get("culprit") or "-", diff)
+            if issue.get("rule_notes"):  # 비즈니스 규칙: 어기는 변경이면 reject
+                prompt += ("\n--- 지켜야 할 비즈니스 규칙 (어기는 변경이면 reject) ---\n%s\n" % issue["rule_notes"])
             r = run(["codex", "exec", "--skip-git-repo-check", "--ephemeral", "-s", "read-only", "-C", repo,
                      "-c", 'model_reasoning_effort="medium"', "-c", "mcp_servers={}",
                      "--output-schema", schema, "-o", out, prompt],
@@ -174,6 +202,7 @@ class Fixer:
         self.runtime_dir = runtime_dir
         self.publish = publish or self._publish
         self.review = review  # (issue, file, diff, repo) -> {"verdict", "reason"}. None 이면 리뷰 없이 PR
+        self.rules = []  # 비즈니스 규칙 (rules.parse). 비어 있으면 예전과 같다
         self.results, self.opened, self.busy = [], 0, set()
         self.db_path = os.path.join(runtime_dir, "prs.json") if runtime_dir else None
         self.db = self._load()
@@ -244,7 +273,10 @@ class Fixer:
 
     def fix(self, issue):
         src = self.sources()
-        user = "Sentry 이슈 %s\n제목: %s\n위치: %s\n\n" % (issue["id"], issue["title"], issue.get("culprit") or "-")
+        user = "Sentry 이슈 %s\n제목: %s\n위치: %s\n" % (issue["id"], issue["title"], issue.get("culprit") or "-")
+        if issue.get("rule_notes"):  # 걸린 비즈니스 규칙 (없으면 예전과 같은 입력)
+            user += "지켜야 할 비즈니스 규칙 (어기는 수정은 만들지 않는다):\n%s\n" % issue["rule_notes"]
+        user += "\n"
         user += "\n\n".join("=== %s ===\n%s" % (f, body) for f, body in src.items())
         p = self.ask(FIX_PROMPT, user, "sentry_fix", FIX_SCHEMA)
         f = p.get("file", "")
@@ -254,9 +286,14 @@ class Fixer:
         title = (p.get("title") or "fix: %s" % issue["title"])[:72]
         if not title.startswith("fix"):
             title = "fix: " + title
+        diff = "".join(difflib.unified_diff(src[f].splitlines(True), new.splitlines(True), "a/" + f, "b/" + f))
+        if self.rules and not issue.get("ask_ok"):  # 패치가 '문의' 규칙에 걸리는 곳을 바꾸면 PR 대신 팀에 묻는다
+            # diff 에는 앞뒤 3줄만 있어 긴 함수 중간을 고치면 함수 이름이 안 보인다: 바뀐 곳을 감싼 함수 정의 줄도 같이 본다
+            hit = rules.blocking(rules.match_patch(self.rules, f, diff + "\n" + enclosing_def(src[f], p.get("find", ""))))
+            if hit:
+                raise AskTeam(hit)
         rv = None
         if self.review is not None:
-            diff = "".join(difflib.unified_diff(src[f].splitlines(True), new.splitlines(True), "a/" + f, "b/" + f))
             try:
                 rv = self.review(issue, f, diff, self.repo)
             except Exception as e:  # noqa: BLE001 — 검토하지 못한 수정은 PR 로 올리지 않는다
@@ -264,8 +301,12 @@ class Fixer:
             if rv["verdict"] != "approve":
                 raise ReviewRejected(rv["reason"])
         review_line = "" if rv is None else "🔍 **Codex 리뷰: 승인** — %s\n\n" % rv["reason"]
+        rules_line = ""
+        if issue.get("rule_notes"):
+            rules_line = "📜 **비즈니스 규칙**%s\n%s\n\n" % (" (담당 팀 확인 후 진행)" if issue.get("ask_ok") else "",
+                                                      issue["rule_notes"])
         body = ("Sentry 이슈 **%s** — `%s`\n\n%s\n\n" % (issue["id"], issue["title"], (p.get("explanation") or "").strip())
-                + review_line
+                + review_line + rules_line
                 + ("Sentry: %s\n\n" % issue["url"] if issue.get("url") else "")
                 + "---\n이 PR 은 MERRY BUGMAS 대시보드의 병정(sentry-bot)이 OpenAI API 로 만들고"
                 + (" Codex 가 리뷰한" if rv else "") + " 자동 수정이다. 사람이 리뷰한 뒤 머지한다.\n")

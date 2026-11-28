@@ -38,6 +38,7 @@ try:
 except ImportError:  # pragma: no cover
     fixer = None
 import elf  # noqa: E402 — 엘프 점원: 트래픽 대응 에이전트 (레버: 캐시·계산대·번호표)
+import rules  # noqa: E402 — 비즈니스 규칙: 고치기 전에 담당 팀에 물어야 하는 곳 (규칙 파일이 없으면 꺼짐)
 try:
     import traffic_live  # 트래픽 실연동 (/metrics 읽기, --live)
 except ImportError:  # pragma: no cover
@@ -475,6 +476,9 @@ SOLDIER_NAMES = ["루돌프", "진저", "호두"]
 ISSUE_RE = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]+-[0-9A-Za-z]+")
 # 명령 뜻 (앞에 있는 것부터 본다)
 ORDER_WORDS = [
+    # 팀 문의로 멈춘 쥐를 사람이 확인한 뒤 진행시킨다. "담당자 확인 완료" 가 human 으로 가지 않게 맨 앞.
+    # 그냥 "진행" 은 넣지 않는다 ("진행 상황 보고" 가 report 가 아니게 되므로)
+    ("proceed", ("확인 완료", "확인완료", "진행해", "진행 해", "진행시켜", "proceed")),
     ("report", ("보고", "상황", "뭐해", "현황", "어때", "status", "report")),
     ("noise", ("noise", "노이즈", "무시", "쫓아")),
     ("human", ("사람", "담당자", "휴먼", "human", "에스컬")),
@@ -482,14 +486,14 @@ ORDER_WORDS = [
     ("rest", ("복귀", "쉬어", "돌아와", "대기", "멈춰", "그만", "휴식", "rest", "home", "stop")),
     ("go", ("출동", "가자", "일해", "시작", "재개", "나가", "go", "start")),
 ]
-OUTCOME_WORD = {"fixed": "MR 생성", "noise": "noise 쫓아냄", "human": "사람 호출"}
+OUTCOME_WORD = {"fixed": "MR 생성", "noise": "noise 쫓아냄", "human": "사람 호출", "ask": "팀 문의"}
 def kind_word(issue):
     """화면에 쓸 판정: AI 판정을 기다리는 중이면 '판정 중'."""
     return "판정 중" if issue.get("ai") == "pending" else issue["kind"]
 
 
 STATE_WORD = {"walk": "추격", "triage": "트리아지", "fix": "수정", "review": "리뷰", "shoo": "쫓는", "flag": "사람 호출",
-              "after": "마무리"}
+              "ask": "팀 문의", "after": "마무리"}
 
 
 class Soldier:
@@ -599,7 +603,9 @@ class Soldier:
                 world.log("🧠 트리아지 %s -> %s: %s" % (iid, kind, m.issue["note"]), 229)
             else:
                 world.log("트리아지 %s: %s -> %s" % (iid, m.issue["title"][:38], kind), 229)
-            if kind == "fixable":
+            if kind == "fixable" and world.ask_rules(m):  # 비즈니스 규칙: 담당 팀 확인 전에는 고치지 않는다
+                self.state, self.timer, self.bubble = "ask", 1.1, "? 팀 문의"
+            elif kind == "fixable":
                 self.state, self.timer = "fix", 2.6
                 world.start_real_fix(m, self)
             elif kind == "noise":
@@ -610,7 +616,11 @@ class Soldier:
             pr = m.issue.get("pr")
             if pr == "pending":  # 300초 안에 안 끝났다
                 m.issue["pr"], m.issue["pr_err"] = None, "시간 초과"
-            if m.issue.get("pr_err"):  # 실제 수정을 못 했다: 사람에게 넘긴다 (MR 을 지어내지 않는다)
+            if m.issue.get("ask_rules"):  # 패치가 '문의' 규칙에 걸리는 곳을 바꾼다: PR 대신 팀 문의
+                world.log("📜 %s 패치가 %s 에 걸림 - PR 을 열지 않고 팀에 문의" % (
+                    iid, ", ".join(r["id"] for r in m.issue["ask_rules"])), 141)
+                self.state, self.timer, self.bubble = "ask", 1.1, "? 팀 문의"
+            elif m.issue.get("pr_err"):  # 실제 수정을 못 했다: 사람에게 넘긴다 (MR 을 지어내지 않는다)
                 world.log("🔧 %s 자동 수정 실패 (%s) - 사람에게 넘김" % (iid, m.issue["pr_err"][:60]), 208)
                 m.issue["kind"] = "needs-human"
                 self.state, self.timer, self.bubble = "flag", 1.1, "!! 수정 실패"
@@ -653,6 +663,18 @@ class Soldier:
             world.log("%s needs-human - 우리에 가두고 담당자 호출" % iid, 226)
             world.record(m, "human", self)
             self.state, self.timer = "after", 0.4
+        elif self.state == "ask":
+            hit = m.issue.get("ask_rules") or []
+            m.state, m.ttl = "caged", 30.0
+            m.issue["ask"] = True  # 사람이 "확인 완료 진행" 하기 전까지 우리에 둔다 (자동으로 풀지 않음)
+            m.issue["question"] = rules.question(m.issue, hit)
+            world.stats["ask"] += 1
+            world.log("📜 %s 팀 문의 - %s · 질문: %s" % (iid, ", ".join("%s(%s)" % (r["id"], r["team"]) for r in hit),
+                                                    m.issue["question"]), 141)
+            self.say(world, "%s 은(는) %s 확인이 필요합니다. 확인되면 '%s 확인 완료 진행' 이라고 해 주세요"
+                     % (iid, "·".join(sorted({r["team"] for r in hit})), iid))
+            world.record(m, "ask", self)
+            self.state, self.timer = "after", 0.4
         elif self.state == "after":
             self.target = None
             self.bubble = ""
@@ -681,8 +703,8 @@ class World:
         self.hist, self.ehist, self.spawn_times = [], [], []
         self.hist_acc = 0.0
         self.mr = 1400
-        self.stats = {"fixed": 0, "noise": 0, "human": 0, "blocked": 0}
-        self.history = []  # 잡은 쥐 기록: 처리 결과(fixed/noise/human)마다 한 건
+        self.stats = {"fixed": 0, "noise": 0, "human": 0, "blocked": 0, "ask": 0}
+        self.history = []  # 잡은 쥐 기록: 처리 결과(fixed/noise/human/ask)마다 한 건
         self.flying = []  # 처치된 쥐가 뒤쪽 우리로 날아가는 중: [x, y, 우리 안 번호, 경과]
         self.show_hist, self.hist_sel = False, None  # 기록 창을 열었는지 · 강조할 이슈 ID
         self.auto = True
@@ -690,6 +712,7 @@ class World:
         self.ai = None  # ai.Brain: 있으면 병정 명령 해석·트리아지·브리핑을 OpenAI API 로 한다
         self.live = None  # sentry_live.SentryFeed: 있으면 쥐는 실제 Sentry 미해결 이슈다 (트래픽은 mock)
         self.fixer = None  # fixer.Fixer: 있으면 실제 Sentry 이슈의 fixable 판정은 코드 패치 PR 로 이어진다
+        self.rules = []  # 비즈니스 규칙(rules.py). 비어 있으면 규칙 확인 없이 예전과 같다
         self.traffic = None  # traffic_live.TrafficFeed: 있으면 rps 는 실제 서버 /metrics 에서 읽은 값이다
         self.traffic_down = False
         self.elf = elf.Elf()  # 트래픽 대응 에이전트. 실서버 레버는 attach_traffic 이 client 를 붙인다
@@ -738,7 +761,7 @@ class World:
             if old.client is not None:  # 실서버 레버는 새 판에서도 그대로 남아 있으니 기준도 이어받는다
                 self.elf.levers, self.elf.base, self.elf.synced = dict(old.levers), dict(old.base), old.synced
             self.stage_gen += 1
-            self.stats = {"fixed": 0, "noise": 0, "human": 0, "blocked": 0}
+            self.stats = {"fixed": 0, "noise": 0, "human": 0, "blocked": 0, "ask": 0}
             self.history, self.show_hist, self.hist_sel, self.flying = [], False, None, []
             self.mr, self.admitted, self.admit_acc = 1400, 0, 0.0
             self.hist, self.ehist, self.spawn_times = [], [], []
@@ -806,6 +829,19 @@ class World:
         else:
             self.set_view("intro")
 
+    # ---- 비즈니스 규칙
+    def ask_rules(self, m):
+        """fixable 쥐의 제목·culprit 을 규칙과 비교한다. '문의' 규칙에 걸리면 True (팀 확인 전에는 고치지 않는다).
+        걸린 규칙은 '주의' 까지 m.issue["rules"]·["rule_notes"] 에 남겨 패치 요청·리뷰에 넘긴다. AI 호출 없음."""
+        hit = rules.match(self.rules, m.issue) if self.rules else []
+        m.issue["rules"], m.issue["rule_notes"] = rules.brief(hit), rules.notes(hit)
+        if m.issue.get("ask_ok"):  # 사람이 팀 확인을 마쳤다
+            return False
+        block = rules.blocking(hit)
+        if block:
+            m.issue["ask_rules"] = block
+        return bool(block)
+
     # ---- 잡은 쥐 기록
     def start_real_fix(self, m, s):
         """실제 Sentry 이슈(--live)이고 수정 레포가 설정돼 있으면 코드 패치 PR 을 만들기 시작한다."""
@@ -822,7 +858,9 @@ class World:
         if self.fixer is None:
             return
         for (gen, issue), res, err in self.fixer.poll():
-            if isinstance(err, fixer.ReviewRejected):
+            if isinstance(err, fixer.AskTeam):  # 패치가 '문의' 규칙에 걸리는 곳을 바꾼다
+                issue["pr"], issue["ask_rules"] = None, err.rules
+            elif isinstance(err, fixer.ReviewRejected):
                 issue["pr"], issue["pr_err"] = None, "Codex 리뷰 반려 - %s" % str(err)[:80]
                 self.log("🔍 Codex 리뷰 반려: %s - %s" % (issue["id"], str(err)[:70]), 208)
             elif err is not None:
@@ -839,7 +877,8 @@ class World:
         self.history.append({"id": m.issue["id"], "title": m.issue["title"], "kind": m.issue["kind"],
                              "outcome": outcome, "soldier": s.idx + 1, "mr": mr, "t": self.t,
                              "pr": pr["pr"] if pr else None, "url": pr["url"] if pr else None,
-                             "note": (pr["title"] if pr else None) or m.issue.get("fix") or m.issue.get("note") or ""})
+                             "note": (pr["title"] if pr else None) or m.issue.get("fix") or m.issue.get("note") or "",
+                             "rules": m.issue.get("rules") or [], "question": m.issue.get("question", "")})
         self.history = self.history[-300:]
 
     def open_history(self, iid=None):
@@ -880,7 +919,7 @@ class World:
             "soldiers": [{"id": s.idx + 1, "name": s.name, "state": s.state, "off": s.off,
                           "target": s.target.issue["id"] if s.target else None} for s in self.soldiers],
             "mice": [{"id": m.issue["id"], "title": m.issue["title"], "kind": kind_word(m.issue), "state": m.state,
-                      "age_s": round(self.t - m.issue.get("born_t", self.t)),
+                      "age_s": round(self.t - m.issue.get("born_t", self.t)), "ask": bool(m.issue.get("ask")),
                       "chasedBy": None if m.claimed is None else m.claimed + 1}
                      for m in self.mice if m.state in ("roam", "held", "caged")],
             # 질문에 답할 수 있게: 처리한 쥐 기록(최근 15건)과 누적 통계
@@ -920,7 +959,7 @@ class World:
         self.dispatch(targets, intent, ids, text)
 
     def dispatch(self, targets, intent, ids, text):
-        if intent in ("catch", "noise", "human") and len(targets) > 1:
+        if intent in ("catch", "noise", "human", "proceed") and len(targets) > 1:
             # 쥐 한 마리는 한 병정이: 놀고 있는 병정, 그다음 복귀 중인 병정, 그다음 번호 순
             rank = {"home": 0, "return": 1, "walk": 2}
             targets = [min(targets, key=lambda s: (s.off, rank.get(s.state, 3), s.idx))]
@@ -929,6 +968,16 @@ class World:
 
     def do_order(self, s, intent, ids):
         live = {m.issue["id"].upper(): m for m in self.mice if m.state in ("roam", "held", "caged")}
+        if intent == "proceed":  # 사람이 담당 팀 확인을 마쳤다: 팀 문의 우리에서 꺼내 규칙을 지키며 고친다
+            m = live.get(ids[0]) if ids else None
+            if m is None or not m.issue.get("ask"):
+                s.say(self, "%s 팀 문의 중인 쥐가 아닙니다" % (ids[0] + " 는") if ids else
+                      "어느 쥐요? 팀 문의 중인 이슈 ID를 같이 말해 주세요 (예: WEB-2B1 확인 완료 진행)")
+                return
+            m.issue.update(ask=False, ask_ok=True, ask_rules=None)
+            m.state, m.claimed, m.ttl = "roam", None, 0.0
+            self.log("📜 %s 팀 확인 완료 - 규칙을 지키며 수정 진행" % m.issue["id"], 141, "all")
+            intent = "catch"
         if intent in ("catch", "noise", "human"):
             if not ids:
                 s.say(self, "어느 쥐요? 이슈 ID를 같이 말해 주세요 (예: WEB-2B1)")
@@ -940,7 +989,8 @@ class World:
                       else "%s 쥐는 안 보입니다" % ids[0])
                 return
             if m.state == "caged":
-                s.say(self, "%s 는 우리에 있어요. 담당자 확인을 기다리는 중입니다" % ids[0])
+                s.say(self, ("%s 는 팀 문의 중입니다. 팀 확인이 끝나면 '%s 확인 완료 진행' 이라고 해 주세요" % (ids[0], ids[0]))
+                      if m.issue.get("ask") else "%s 는 우리에 있어요. 담당자 확인을 기다리는 중입니다" % ids[0])
                 return
             if m.state == "held" and m.claimed != s.idx:
                 s.say(self, "%s 는 병정%d 이 이미 잡고 있습니다" % (ids[0], m.claimed + 1))
@@ -977,11 +1027,12 @@ class World:
                 s.say(self, "출동합니다!")
         elif intent == "report":
             mine = [r for r in self.history if r["soldier"] == s.idx + 1]
-            cnt = {k: sum(1 for r in mine if r["outcome"] == k) for k in ("fixed", "noise", "human")}
+            cnt = {k: sum(1 for r in mine if r["outcome"] == k) for k in ("fixed", "noise", "human", "ask")}
             queued = [m.issue["id"] for m in self.mice if m.assigned == s.idx and m.state == "roam"]
             now = ("%s %s 중" % (s.target.issue["id"], STATE_WORD.get(s.state, s.state))) if s.target else \
                 ("%s 맡음, 곧 출동" % queued[0]) if queued else ("복귀 대기" if s.off else "위병소 대기")
-            s.say(self, "%s · 지금까지 MR %d · noise %d · 사람 %d" % (now, cnt["fixed"], cnt["noise"], cnt["human"]))
+            s.say(self, "%s · 지금까지 MR %d · noise %d · 사람 %d%s" % (now, cnt["fixed"], cnt["noise"], cnt["human"],
+                                                              " · 문의 %d" % cnt["ask"] if cnt["ask"] else ""))
         else:
             s.say(self, "무슨 명령인지 모르겠어요 (예: WEB-2B1 잡아 / 복귀 / 출동 / 보고)", 245)
 
@@ -1247,7 +1298,7 @@ class World:
         os.makedirs(out_dir, exist_ok=True)
         path = os.path.join(out_dir, "report-%s.md" % time.strftime("%Y%m%d-%H%M%S"))
         names = {s.idx + 1: s.name for s in self.soldiers}
-        word = {"fixed": "✔ 수정", "noise": "✖ noise", "human": "! 사람"}
+        word = {"fixed": "✔ 수정", "noise": "✖ noise", "human": "! 사람", "ask": "? 팀 문의"}
         L = ["# %s" % ((ai_res or {}).get("title") or "MERRY BUGMAS 사후 보고서"), "",
              "%s · 서비스 %s · %s분 · 데이터 %s" % (time.strftime("%Y-%m-%d %H:%M"), d["service"] or "ALL", d["minutes"],
                                               "실연동" if d["live"]["on"] or d["live"]["traffic"] == "metrics" else "mock"), ""]
@@ -1352,7 +1403,7 @@ class World:
 
         for m in self.mice:
             m.update(self, dt)
-            if m.state == "caged" and m.ttl <= 0 and self.auto:
+            if m.state == "caged" and m.ttl <= 0 and self.auto and not m.issue.get("ask"):  # 팀 문의는 사람이 풀 때까지
                 self.log("담당자가 %s 확인 완료 (우리 해제)" % m.issue["id"], 159)
                 m.state, m.ttl = "dead", -1
         self.mice = [m for m in self.mice if not (m.state in ("dead", "flee") and m.ttl < 0)]
@@ -1457,12 +1508,15 @@ class World:
             "mice": [{"id": m.issue["id"], "title": m.issue["title"],
                       "kind": "pending" if m.issue.get("ai") == "pending" else m.issue["kind"],
                       "note": m.issue.get("note", ""),
+                      "rules": m.issue.get("rules") or [],  # 걸린 비즈니스 규칙 {id, action 문의/주의, team}
+                      "ask": bool(m.issue.get("ask")), "question": m.issue.get("question", ""),  # 팀 문의 중 · 질문 초안
                       "state": m.state, "chasedBy": None if m.claimed is None else m.claimed + 1}
                      for m in self.mice if m.state != "dead"],
             "prs": [dict(v, issue=k) for k, v in (self.fixer.db.items() if self.fixer else [])],
             "history": [{"id": r["id"], "outcome": r["outcome"], "soldier": r["soldier"], "mr": r["mr"],
                          "pr": r.get("pr"), "url": r.get("url"),
-                         "title": r["title"], "note": r.get("note", "")} for r in self.history[-20:]],
+                         "title": r["title"], "note": r.get("note", ""),
+                         "rules": r.get("rules") or [], "question": r.get("question", "")} for r in self.history[-20:]],
             "soldiers": [{"id": s.idx + 1, "name": s.name, "state": s.state, "off": s.off,
                           "handled": sum(1 for r in self.history if r["soldier"] == s.idx + 1),
                           "target": s.target.issue["id"] if s.target else None} for s in self.soldiers],
@@ -1494,8 +1548,10 @@ class World:
             return "배회 중", 203
         if m.state == "held" and m.claimed is not None:
             s = self.soldiers[m.claimed]
-            word = {"walk": "출동", "shoo": "쫓는 중", "flag": "사람 호출"}.get(s.state, s.state)
+            word = {"walk": "출동", "shoo": "쫓는 중", "flag": "사람 호출", "ask": "팀 문의"}.get(s.state, s.state)
             return "병정%d %s" % (m.claimed + 1, word), 117
+        if m.state == "caged" and m.issue.get("ask"):
+            return "📜 팀 문의", 141
         if m.state == "caged":
             return "담당자 대기", 226
         if m.state == "flee":
@@ -1999,8 +2055,8 @@ def compose_overview(world, w, h, paused):
 SOLDIER_STATE_WORD = {"home": ("위병소 대기", 250), "walk": ("출동", 117), "triage": ("🔍 triage", 214),
                       "fix": ("🔧 fix", 214), "review": ("👀 review", 214), "shoo": ("🧹 noise 쫓는 중", 245),
                       "flag": ("📞 사람 호출", 226), "return": ("복귀 중", 250),
-                      "after": ("✔ 마무리", 46)}
-OUTCOME_WORD = {"fixed": ("MR", 46), "noise": ("noise", 245), "human": ("사람", 226)}
+                      "ask": ("📜 팀 문의", 141), "after": ("✔ 마무리", 46)}
+OUTCOME_WORD = {"fixed": ("MR", 46), "noise": ("noise", 245), "human": ("사람", 226), "ask": ("문의", 141)}
 
 
 def soldier_card(world, s, width, height):
@@ -2338,7 +2394,7 @@ def issue_lines(world, w, h):
     return lines[:h]
 
 
-OUTCOME_TAG = {"fixed": ("✔ MR", 46), "noise": ("✖ noise", 245), "human": ("! 사람", 226)}
+OUTCOME_TAG = {"fixed": ("✔ MR", 46), "noise": ("✖ noise", 245), "human": ("! 사람", 226), "ask": ("? 문의", 141)}
 
 
 def history_lines(world, w, n):
@@ -2349,7 +2405,7 @@ def history_lines(world, w, n):
     per = "  ".join("%d %s %d건" % (s.idx + 1, s.name, sum(1 for r in hist if r["soldier"] == s.idx + 1))
                     for s in world.soldiers)
     lines = [seg_line([("  🏆 잡은 쥐 기록 ", 226, True), ("총 %d건 " % len(hist), 231, True),
-                       ("· MR %d · noise %d · 사람 %d" % (cnt["fixed"], cnt["noise"], cnt["human"]), 250),
+                       ("· MR %d · noise %d · 사람 %d · 문의 %d" % (cnt["fixed"], cnt["noise"], cnt["human"], cnt["ask"]), 250),
                        ("   │ " + per, 117), ("   [r·x·클릭] 닫기", 242)], w, 52)]
     lines.append(seg_line([(" " + pad("결과", 10) + pad("ID", 12) + pad("판정", 13) + pad("병정", 12) + pad("시각", 7)
                             + "AI 판정 근거 │ Sentry 제목", 242)], w, 237))
@@ -2677,6 +2733,20 @@ def attach_live_all(world):
     attach_fixer(world)
 
 
+def attach_rules(world):
+    """비즈니스 규칙 표(XMAS_RULES 또는 XMAS_FIX_REPO/BUSINESS_RULES.md)를 읽는다. 없으면 규칙 없이(지금과 같음)."""
+    path = rules.default_path()
+    if not path:
+        return False
+    world.rules = rules.load(path)
+    if not world.rules:
+        world.log("📜 비즈니스 규칙 파일을 못 읽었거나 비어 있음 (%s) - 규칙 없이 진행" % path, 245, "all")
+        return False
+    n = len(rules.blocking(world.rules))
+    world.log("📜 비즈니스 규칙 %d개 (문의 %d · 주의 %d) - %s" % (len(world.rules), n, len(world.rules) - n, path), 141, "all")
+    return True
+
+
 def attach_fixer(world):
     """--live + XMAS_FIX_REPO: 실제 Sentry 이슈를 병정이 코드 패치 PR 로 고친다. 실제 OpenAI 가 있어야 한다."""
     if fixer is None or world.live is None or not fixer.configured():
@@ -2686,6 +2756,7 @@ def attach_fixer(world):
         return False
     review = fixer.codex_review if fixer.review_enabled() else None
     world.fixer = fixer.Fixer(ask=world.ai.ask, runtime_dir=RUNTIME_DIR, review=review)
+    world.fixer.rules = world.rules  # 패치가 '문의' 규칙에 걸리면 PR 대신 팀 문의
     world.log("🔧 실제 수정 모드 - fixable 이슈는 %s 레포에 패치 PR 을 연다 (최대 %d개, %s, 머지는 사람이)" % (
         world.fixer.name, world.fixer.max_prs, "PR 전에 Codex 리뷰" if review else "Codex 리뷰 없음"), 141, "all")
     return True
@@ -2700,6 +2771,7 @@ def run_interactive(skip_intro=False, use_ai=True, replay=None, live=False):
     out = sys.stdout
     world = World()
     attach_ai(world, use_ai, replay)
+    attach_rules(world)
     if live:
         attach_live_all(world)
     if skip_intro:
@@ -2828,6 +2900,7 @@ def run_stream(w, h, skip_intro=False, use_ai=True, replay=None, live=False):
     import json
     world = World()
     attach_ai(world, use_ai, replay)
+    attach_rules(world)
     if live:
         attach_live_all(world)
     if skip_intro:
@@ -2918,9 +2991,12 @@ def main():
                     help="mock 모드에서도 OpenAI 를 쓴다 (기본: OpenAI 는 --live 일 때만, mock 은 호출 0회)")
     ap.add_argument("--replay", nargs="?", const=REPLAY_DEFAULT, metavar="JSONL",
                     help="API 키 없이 녹화된 실제 AI 트리아지 결과를 재생 (기본 recordings/ai.jsonl)")
+    ap.add_argument("--rules", metavar="MD", help="비즈니스 규칙 표 (기본: XMAS_RULES, 없으면 XMAS_FIX_REPO/BUSINESS_RULES.md)")
     ap.add_argument("--live", action="store_true",
                     help="실연동(읽기 전용): 쥐 = 실제 Sentry 미해결 이슈 (.env 의 SENTRY_*), 트래픽 = 실제 서버 /metrics (TRAFFIC_METRICS_URL)")
     args = ap.parse_args()
+    if args.rules:
+        os.environ["XMAS_RULES"] = args.rules
     # mock 모드(--live 없음)는 OpenAI 를 부르지 않는다 (크레딧 보호). --ai 로만 켠다. --replay 는 API 를 안 쓰니 그대로
     args.no_ai = args.no_ai or not (args.live or args.ai or args.replay)
     if args.seed is not None:
