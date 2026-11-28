@@ -11,7 +11,7 @@
 - **언어·의존성**: Python 3.8+ **표준 라이브러리만**. 화면은 `▀` 반블록 픽셀아트(256색). Pillow 는 `tools/` 의 이미지 생성에만
 - **루프**: 12 FPS. `World.update(dt)` 로 상태를 진행 → `compose(world, w, h)` 가 ANSI 문자열 줄 목록을 만든다 → 터미널 또는 옆 패널(JSON 프레임)로 출력
 - **외부와의 연결**은 전부 **백그라운드 스레드 + 큐**다. 메인 루프는 매 프레임 `poll()` 로 결과만 가져가고, 실패해도 멈추지 않는다
-- **테스트**: `python3 -m unittest discover -s tests` (76개, 약 20초, 네트워크·OpenAI·Codex 없음)
+- **테스트**: `python3 -m unittest discover -s tests` (92개, 약 25초, 네트워크·OpenAI·Codex 없음)
 
 ## 2. 파일 지도
 
@@ -22,7 +22,8 @@
 | `ai.py` | OpenAI 두뇌. Responses API + strict JSON Schema. 백그라운드 작업 큐 | `Brain`(`order`·`triage`·`brief`·`traffic`·`ask`) · `ReplayBrain` · `available()` · `load_dotenv()` |
 | `sentry_live.py` | Sentry 미해결 이슈 읽기 (읽기 전용, `--live`). 새 이슈마다 최신 이벤트를 1회 읽어 스택 프레임(`frames`)을 붙인다 | `SentryFeed`(`fetch`·`fetch_frames`·`poll`·`reset`) · `to_issue` · `frames_from_event` |
 | `traffic_live.py` | 서버 `/metrics`(Prometheus) 읽기 → rps·5xx·응답 시간·Web Vitals·레버 게이지. 레버 쓰기 클라이언트 | `TrafficFeed`(`sample`·`rps`·`metrics`·`levers`) · `LeverClient` · `admin_url()` |
-| `fixer.py` | 실연동 fixable 이슈 → OpenAI 패치 → Codex 리뷰(`codex exec -s read-only`, 반려면 사람에게) → git worktree 브랜치 → `gh pr create` (머지 안 함) | `Fixer`(`submit`·`poll`·`fix`, `review` 주입) · `codex_review` · `ReviewRejected` · `apply_patch` · `check_syntax` |
+| `fixer.py` | 실연동 fixable 이슈 → OpenAI 패치 → Codex 리뷰(`codex exec -s read-only`, 반려면 사람에게) → git worktree 브랜치 → `gh pr create` (머지 안 함) | `Fixer`(`submit`·`poll`·`fix`, `review` 주입) · `codex_review` · `ReviewRejected` · `AskTeam`(패치가 `문의` 규칙 대상을 바꿈) · `apply_patch` · `check_syntax` |
+| `rules.py` | 비즈니스 규칙 표(마크다운) 읽기 · 스택/패치와 대상 비교 · 팀 질문 초안. AI 호출 없음. `문의` 면 고치지 않고 팀 문의, `주의` 면 패치 요청·리뷰에 규칙을 붙인다 | `parse` · `load` · `default_path` · `match` · `match_patch` · `blocking` · `notes` · `question` |
 | `market` | 채팅·사람용 CLI. `status` 는 `.runtime/state.json` 출력, 나머지는 `.runtime/cmd` 에 한 줄 추가 | |
 | `run-with-codex.sh` | tmux 좌우 분할: 왼쪽 Codex, 오른쪽 대시보드(mock) | |
 | `AGENTS.md` | **운영 채팅** AI 의 규칙 (명령 목록, status 필드, 답하는 법) | |
@@ -33,7 +34,7 @@
 | `tools/sentry_seed.py` · `codex-autopilot.sh` | Sentry 테스트 이벤트 넣기 / Codex 자율 운영 루프 (`XMAS_MARKET_RUNTIME` 으로 다른 대시보드에 붙일 수 있음) | |
 | `tools/elf_live_eval.py` | 엘프만 실서버 `/metrics`·레버·실제 OpenAI 로 돌려 조치 기록을 남김 (쥐 없음 → 트리아지 0회) | |
 | `recordings/ai.jsonl` | 실제 AI 트리아지 녹화 (`--replay`) | |
-| `tests/test_smoke.py` · `test_elf.py` · `test_stack.py` | 43 + 17 + 16 테스트. 가짜 OpenAI(`FakeOpenAI`)·가짜 Codex 리뷰·가짜 `/metrics`·가짜 시계·가짜 Sentry 이벤트(`test_stack.EVENT`) | `new_world` · `step` · `wait_ai` |
+| `tests/test_smoke.py` · `test_elf.py` · `test_stack.py` · `test_rules.py` | 43 + 17 + 16 + 16 테스트. 가짜 OpenAI(`FakeOpenAI`)·가짜 Codex 리뷰·가짜 `/metrics`·가짜 시계·가짜 Sentry 이벤트(`test_stack.EVENT`) | `new_world` · `step` · `wait_ai` |
 | (별도 레포) [demo-web](https://github.com/merrybugmas/demo-web) | 실연동 시연 서버: 버그 심은 페이지, `/metrics`, 처리 슬롯 제한, `/admin/levers`, `loadgen.py` | |
 
 ## 3. `xmas_market.py` 안의 구역 (위에서 아래 순서)

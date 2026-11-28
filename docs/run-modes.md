@@ -56,6 +56,7 @@
 | `TRAFFIC_ADMIN_URL` | 엘프 레버 주소 (없으면 `TRAFFIC_METRICS_URL` 의 경로를 `/admin/levers` 로) |
 | `XMAS_FIX_REPO` · `XMAS_FIX_MAX` | 병정의 실제 수정 PR (`--live` + OpenAI 필요) |
 | `XMAS_FIX_REVIEW`(codex) · `XMAS_FIX_REVIEW_TIMEOUT`(90) | PR 전에 Codex 리뷰 (`codex` CLI 로그인 필요, `off` 로 끔). 시간 초과면 1회 재시도, 그래도 안 되면 PR 없이 사람에게. API 크레딧이 아니라 Codex 사용량을 쓴다 |
+| `XMAS_RULES` (또는 `--rules MD`) | 비즈니스 규칙 표 경로. 없으면 `XMAS_FIX_REPO` 의 `BUSINESS_RULES.md`, 그것도 없으면 규칙 없음(지금과 같음). 규칙 비교는 AI 없이 해서 OpenAI 호출 수는 그대로다. 걸린 규칙이 있으면 패치 요청·Codex 리뷰 입력에 규칙 글이 붙는다. mock 예시: `docs/mock-business-rules.md` |
 | `DEMO_CAPACITY` (demo-web) | 데모 서버 동시 처리 슬롯 기본값 (2) |
 
 ## 5. 실연동 데모 한 벌
