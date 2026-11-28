@@ -1,9 +1,12 @@
 import copy
 from collections import deque
 import json
+import os
 from pathlib import Path
 import queue
 import random
+import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -19,7 +22,8 @@ STATES = {'received': '접수', 'queued': '대기', 'processing': '안내 중', 
 # PR 등록 축하 연출을 보여 주는 시간(초)
 CELEBRATION_S = 15
 CATEGORIES = {'cookie': '쿠키', 'gift': '선물', 'ornament': '장식', 'hot_choco': '핫초코', 'toy': '장난감'}
-LIMITS = Path(__file__).resolve().parents[1] / 'agent_bridge' / 'limits.json'
+ROOT = Path(__file__).resolve().parents[1]
+LIMITS = ROOT / 'agent_bridge' / 'limits.json'
 
 
 # 고객 급증의 요청 수와 유입 시간과 seed를 한도 파일 범위에서 무작위로 선택
@@ -76,6 +80,8 @@ class Session:
         self.last_run = None
         self.history_at = 0
         self.guide = False
+        self.repair = None
+        self.armed = (None, 0.0)
         self.thread = None
 
     # 백그라운드 조회 시작
@@ -112,6 +118,27 @@ class Session:
     def active(self):
         return bool(self.run_id and (not self.run or self.run['status'] in ('pending', 'running', 'stopping')))
 
+    # 화면에서 Codex 수정 실행. 유료 실행이라 같은 키를 한 번 더 눌러야 시작
+    def start_repair(self, publish):
+        with self.lock:
+            if self.repair and self.repair.poll() is None:
+                self.message = 'Codex가 이미 수정 중입니다.'
+                return
+            if not self.complete():
+                self.message = '유입이 끝난 뒤에 Codex 수정을 시작할 수 있습니다.'
+                return
+            now = time.monotonic()
+            if self.armed[0] != publish or now - self.armed[1] > 5:
+                self.armed = (publish, now)
+                self.message = ('Codex 수정 후 초안 PR 등록' if publish else 'Codex 수정') + ': 유료 실행입니다. 5초 안에 같은 키를 한 번 더 누르면 시작합니다.'
+                return
+            self.armed = (None, 0.0)
+            # 화면이 멈추지 않도록 별도 프로세스로 실행하고 출력은 데이터 폴더의 기록 파일에 남김
+            log = (Path(os.getenv('MBM_DATA_DIR', ROOT / 'data')) / 'repair.log').open('w')
+            command = [sys.executable, '-B', '-m', 'evals.repair'] + (['--publish'] if publish else [])
+            self.repair = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+            self.message = 'Codex 수정을 시작했습니다. 진행 단계는 성능 개선 에이전트 칸에 표시됩니다.'
+
     # 키보드와 채팅 명령을 같은 작업 큐에 전달
     def command(self, text):
         parts = text.strip().split()
@@ -121,6 +148,9 @@ class Session:
         parts[0] = action
         if action == 'guide':
             self.guide = not self.guide
+            return
+        if action in ('repair', 'publish'):
+            self.start_repair(action == 'publish')
             return
         if action not in ('normal', 'surge', 'stop', 'replay', 'compare', 'select'):
             with self.lock:
@@ -551,7 +581,7 @@ class Session:
         if ch in ('\x1b', 'm'):
             self.guide = False
             return True
-        action = {'n': 'normal', 't': 'surge', 'x': 'stop', 'r': 'replay', 'c': 'compare', 'g': 'guide'}.get(ch)
+        action = {'n': 'normal', 't': 'surge', 'x': 'stop', 'r': 'replay', 'c': 'compare', 'g': 'guide', 'f': 'repair', 'p': 'publish'}.get(ch)
         if action:
             self.command(action)
             return True
@@ -578,7 +608,8 @@ class Session:
         frame = [ui.seg_line([('  🎄 MERRY BUGMAS ', 226, True), (' 트래픽 부하 ', 16, True, 223),
                              ('  || 화면 정지' if paused else '  LIVE EXPERIMENT', 159)], width, 52)]
         buttons = [('평소 방문[n]', 'normal'), ('고객 급증[t]', 'surge'), ('중지[x]', 'stop'),
-                   ('재실험[r]', 'replay'), ('비교[c]', 'compare'), ('개선 안내[g]', 'guide')]
+                   ('재실험[r]', 'replay'), ('비교[c]', 'compare'), ('개선 안내[g]', 'guide'),
+                   ('Codex 수정[f]', 'repair'), ('수정 후 PR[p]', 'publish')]
         segments, col = [], 1
         for label, action in buttons:
             label = ' ' + label + ' '

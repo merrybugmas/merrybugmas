@@ -652,6 +652,35 @@ class TrafficFrontendTests(unittest.TestCase):
         session.celebrate_until = 0
         self.assertFalse(session.celebrating())
 
+    # Codex 수정은 유입이 끝난 뒤 같은 키를 두 번 눌러야 한 번만 시작
+    def test_repair_key_needs_finished_run_and_second_press(self):
+        session = Session('http://127.0.0.1:8000')
+        started = []
+
+        # 실제 Codex 대신 실행 요청만 기록
+        class Fake:
+            def __init__(self, command, **kwargs):
+                started.append(command)
+
+            def poll(self):
+                return None
+
+        with tempfile.TemporaryDirectory() as folder, patch.dict('os.environ', {'MBM_DATA_DIR': folder}), patch('frontend.session.subprocess.Popen', Fake):
+            session.handle_key('f')
+            self.assertIn('유입이 끝난 뒤', session.status()['message'])
+            session.run_id, session.run = 'run-1', snapshot(status='completed')
+            session.handle_key('f')
+            self.assertIn('한 번 더', session.status()['message'])
+            self.assertEqual(started, [])
+            session.handle_key('p')
+            self.assertEqual(started, [])
+            session.handle_key('p')
+            self.assertEqual(started[0][-3:], ['-m', 'evals.repair', '--publish'])
+            session.handle_key('f')
+            session.handle_key('f')
+            self.assertEqual(len(started), 1)
+            self.assertIn('이미 수정 중', session.status()['message'])
+
 
 if __name__ == '__main__':
     unittest.main()
