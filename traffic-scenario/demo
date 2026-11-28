@@ -36,7 +36,7 @@ case "${1:-help}" in
     echo './demo a|b|c   출발 상태를 맞추고 서버와 화면을 켠다'
     echo './demo surge   켜져 있는 화면에 무작위 고객 급증을 보낸다'
     echo './demo codex   Codex에게 성능 문제 대응을 요청한다 (유료)'
-    echo './demo pr      채택된 수정으로 올릴 PR 내용을 보여 준다. --publish를 붙이면 실제로 올린다'
+    echo './demo pr      채택된 수정으로 올릴 PR 내용을 보여 준다. --publish를 붙이면 실제로 올리고 --draft를 함께 붙이면 초안으로 올린다'
     echo './demo test    테스트를 실행한다'
     ;;
 esac

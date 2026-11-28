@@ -385,3 +385,7 @@ def test_pr_is_opened_once_on_new_branch_without_merging(tmp_path, monkeypatch):
     assert not any("merge" in c for c in calls) and ["git", "push", "-q", "-u", "origin", out["branch"]] in calls
     again = publish.publish(tmp_path, confirm=True, sh=sh)
     assert not again["published"] and again["already"]["url"] == out["url"]
+    assert "--draft" not in [a for c in calls for a in c]
+    (tmp_path / ".runtime" / "perf-prs.json").unlink()
+    assert publish.publish(tmp_path, confirm=True, draft=True, sh=sh)["draft"]
+    assert "--draft" in calls[-1]

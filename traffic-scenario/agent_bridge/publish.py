@@ -67,7 +67,7 @@ def prepare(data_dir, sh=run):
 
 
 # 사용 중인 작업 폴더를 건드리지 않도록 별도 worktree의 새 브랜치에 커밋해 PR 생성
-def publish(data_dir, confirm=False, sh=run):
+def publish(data_dir, confirm=False, draft=False, sh=run):
     plan = prepare(data_dir, sh)
     record = ROOT / ".runtime" / "perf-prs.json"
     opened = json.loads(record.read_text()) if record.exists() else {}
@@ -94,7 +94,9 @@ def publish(data_dir, confirm=False, sh=run):
         sh(["git", "commit", "-q", "-F", str(message)], work)
         message.unlink()
         sh(["git", "push", "-q", "-u", "origin", plan["branch"]], work)
-        url = sh(["gh", "pr", "create", "--base", plan["base"], "--head", plan["branch"], "--title", plan["title"], "--body", plan["body"]], work).strip()
+        # 초안으로 열면 준비 완료로 바꾸기 전에는 병합할 수 없음
+        create = ["gh", "pr", "create", "--base", plan["base"], "--head", plan["branch"], "--title", plan["title"], "--body", plan["body"]]
+        url = sh(create + (["--draft"] if draft else []), work).strip()
     finally:
         subprocess.run(["git", "worktree", "remove", "--force", work], cwd=REPO, capture_output=True)
 
@@ -102,4 +104,4 @@ def publish(data_dir, confirm=False, sh=run):
     record.parent.mkdir(exist_ok=True)
     record.write_text(json.dumps(opened, ensure_ascii=False, indent=2))
 
-    return {"published": True, "url": url, "branch": plan["branch"], "base": plan["base"], "title": plan["title"], "files": plan["files"]}
+    return {"published": True, "draft": draft, "url": url, "branch": plan["branch"], "base": plan["base"], "title": plan["title"], "files": plan["files"]}

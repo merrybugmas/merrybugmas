@@ -335,7 +335,7 @@ flowchart TD
 | `restart <run_id>` | Codex | 검색 서버를 재시작해 수정을 반영한다 |
 | `compare <기준> <후보>` | Codex | 전후를 비교해 판정한다 |
 | `rollback` | Codex | 코드와 DB 구조를 저장한 상태로 되돌린다 |
-| `pr [--publish]` | 사람 | 채택된 수정으로 올릴 PR의 브랜치와 제목과 변경 내용을 보여 준다. `--publish`를 붙이면 새 브랜치에 커밋해 PR을 연다 |
+| `pr [--publish]` | 사람 | 채택된 수정으로 올릴 PR의 브랜치와 제목과 변경 내용을 보여 준다. `--publish`를 붙이면 새 브랜치에 커밋해 PR을 연다. `--draft`를 함께 붙이면 초안으로 연다 |
 | `progress <run_id> <단계> <메시지>` | Codex | 작업 단계를 화면에 전달한다. 단계는 `analyzing` `modifying` `restarting` `testing` `comparing` `finished` `failed` 중 하나다 |
 
 ## 6. 환경변수와 설정
@@ -416,7 +416,6 @@ flowchart TD
 
 ## 8. 추가 문서
 
-- [`../docs/load-scenario-plan.md`](../docs/load-scenario-plan.md): 시나리오를 고른 근거와 측정 결과와 리뷰 반영 내용과 Codex 실제 실행 기록
 - [`../AGENTS.md`](../AGENTS.md): 이 폴더의 주석 작성 규칙. 이 도구가 덧붙인 내용은 없다
 - [`../.agents/skills/performance-repair/SKILL.md`](../.agents/skills/performance-repair/SKILL.md): Codex의 성능 문제 대응 절차와 수정 범위
 - [`../evals/README.md`](../evals/README.md): 답을 뺀 작업 폴더와 에이전트 평가 지표

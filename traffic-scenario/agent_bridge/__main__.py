@@ -44,7 +44,9 @@ def main():
     for name in ("snapshot", "rollback", "scope"):
         sub.add_parser(name)
 
-    sub.add_parser("pr").add_argument("--publish", action="store_true")
+    pr = sub.add_parser("pr")
+    pr.add_argument("--publish", action="store_true")
+    pr.add_argument("--draft", action="store_true")
     sub.add_parser("scenario").add_argument("name", choices=sorted(scenario.STATES))
     args = p.parse_args()
 
@@ -89,7 +91,7 @@ def main():
         ops.note({"restart": True, "by": "rollback"})
         out = guard.rollback(ops.DATA)
     elif args.command == "pr":
-        out = publish.publish(ops.DATA, args.publish)
+        out = publish.publish(ops.DATA, args.publish, args.draft)
     elif args.command == "scope":
         out = guard.scope(ops.DATA)
     else:
