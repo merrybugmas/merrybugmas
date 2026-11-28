@@ -681,6 +681,25 @@ class TrafficFrontendTests(unittest.TestCase):
             self.assertEqual(len(started), 1)
             self.assertIn('이미 수정 중', session.status()['message'])
 
+    # 서버가 모르는 이전 실험에 묶이지 않고 새 유입을 시작
+    def test_unknown_saved_run_is_dropped_so_new_load_can_start(self):
+        calls = []
+
+        # 저장된 실험 번호는 모르는 서버 흉내
+        def api(method, path, body=None):
+            calls.append((method, path))
+            if path.startswith('/api/runs/old'):
+                raise ValueError('RUN_NOT_FOUND: 실험을 찾을 수 없습니다.')
+            return {'run_id': 'run-new'} if method == 'POST' else {'status': 'ok'}
+
+        session = Session('http://127.0.0.1:8000', 'old', transport=api)
+        self.assertTrue(session.active())
+        session.poll()
+        self.assertIsNone(session.run_id)
+        self.assertFalse(session.active())
+        session.execute(['surge'])
+        self.assertEqual(session.run_id, 'run-new')
+
 
 if __name__ == '__main__':
     unittest.main()

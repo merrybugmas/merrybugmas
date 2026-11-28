@@ -282,7 +282,16 @@ class Session:
         if not self.run_id:
             self.transport('GET', '/health')
             return
-        snapshot = self.transport('GET', f'/api/runs/{self.run_id}')
+        try:
+            snapshot = self.transport('GET', f'/api/runs/{self.run_id}')
+        except ValueError as exc:
+            if not str(exc).startswith('RUN_NOT_FOUND'):
+                raise
+            # 데이터 폴더가 바뀌어 서버가 모르는 실험을 계속 조회하면 새 유입도 시작할 수 없으므로 화면의 실험을 비움
+            with self.lock:
+                self.run_id, self.run, self.restoring, self.cursor = None, None, False, 0
+                self.message = '이전 실험을 서버에서 찾을 수 없어 새로 시작합니다. 평소 방문 또는 고객 급증을 선택하세요.'
+            return
         for _ in range(20):
             page = self.transport('GET', f'/api/runs/{self.run_id}/events?after_seq={self.cursor}&limit=1000')
             self.apply(page['events'])
