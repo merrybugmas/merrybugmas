@@ -16,6 +16,7 @@ Grafana·Sentry 호출로 바꾸면 된다. 의존성 없음(Python 3.8+ 표준 
   python3 xmas_market.py --snapshot 60 --size 100x30   # 60초 시뮬레이션 뒤 한 프레임 출력
 """
 import argparse
+import copy
 import math
 import os
 import random
@@ -39,6 +40,7 @@ except ImportError:  # pragma: no cover
     fixer = None
 import elf  # noqa: E402 — 엘프 점원: 트래픽 대응 에이전트 (레버: 캐시·계산대·번호표)
 import rules  # noqa: E402 — 비즈니스 규칙: 고치기 전에 담당 팀에 물어야 하는 곳 (규칙 파일이 없으면 꺼짐)
+import knowledge  # noqa: E402 — 서비스/오류/사례/규칙 관계와 사례 검색 (LLM 호출 없음)
 try:
     import traffic_live  # 트래픽 실연동 (/metrics 읽기, --live)
 except ImportError:  # pragma: no cover
@@ -735,6 +737,7 @@ class World:
         self.live = None  # sentry_live.SentryFeed: 있으면 쥐는 실제 Sentry 미해결 이슈다 (트래픽은 mock)
         self.fixer = None  # fixer.Fixer: 있으면 실제 Sentry 이슈의 fixable 판정은 코드 패치 PR 로 이어진다
         self.rules = []  # 비즈니스 규칙(rules.py). 비어 있으면 규칙 확인 없이 예전과 같다
+        self.kb, self.kb_repo = None, ""
         self.traffic = None  # traffic_live.TrafficFeed: 있으면 rps 는 실제 서버 /metrics 에서 읽은 값이다
         self.traffic_down = False
         self.elf = elf.Elf()  # 트래픽 대응 에이전트. 실서버 레버는 attach_traffic 이 client 를 붙인다
@@ -880,6 +883,8 @@ class World:
         if self.fixer is None:
             return
         for (gen, issue), res, err in self.fixer.poll():
+            if gen != self.stage_gen:
+                continue
             if isinstance(err, fixer.AskTeam):  # 패치가 '문의' 규칙에 걸리는 곳을 바꾼다
                 issue["pr"], issue["ask_rules"] = None, err.rules
             elif isinstance(err, fixer.ReviewRejected):
@@ -901,7 +906,10 @@ class World:
                              "pr": pr["pr"] if pr else None, "url": pr["url"] if pr else None,
                              "note": (pr["title"] if pr else None) or m.issue.get("fix") or m.issue.get("note") or "",
                              "rules": m.issue.get("rules") or [], "question": m.issue.get("question", ""),
-                             "layer": m.issue.get("layer", "front")})
+                             "layer": m.issue.get("layer", "front"),
+                             "knowledge": copy.deepcopy(m.issue.get("knowledge")),
+                             "knowledge_usage": m.issue.get("knowledge_usage", "reference-only"),
+                             "resolution_status": "pr-open" if pr else ("simulated" if not m.issue.get("live") else outcome)})
         self.history = self.history[-300:]
 
     def open_history(self, iid=None):
@@ -1130,10 +1138,22 @@ class World:
             return  # 실연동 중에는 가짜 쥐를 섞지 않는다
         issue = issue or self.src.make_issue(self.svc_key)
         issue.setdefault("born_t", self.t)
+        if self.kb is not None:
+            # 실연동 서비스는 화면 선택값이 아니라 프로젝트 매핑으로 정한다.
+            repo = self.kb_repo if issue.get("live") else ("demo:merrybugmas" if self.svc_key == "RESUME" else "merrybugmas/demo-web")
+            service = self.kb.service_for(repo, issue.get("project", "")) if issue.get("live") else self.svc_key
+            issue["knowledge"] = self.kb.retrieve(issue, repo, service)
+            issue["knowledge_usage"] = "reference-only"
+            if issue["knowledge"]["cases"]:
+                self.log("📚 %s 참고 사례: %s" % (issue["id"], ", ".join(c["id"] for c in issue["knowledge"]["cases"])), 117)
         if self.ai is not None:  # mock 판정 대신 AI 가 제목을 보고 판정한다 (오기 전까지 병정은 트리아지에서 기다림)
             issue["ai"] = "pending"
-            self.ai.submit("triage", {"id": issue["id"], "title": issue["title"], "service": self.svc_key,
-                                      "layer": issue.get("layer", "front")}, (self.stage_gen, issue))
+            payload = {"id": issue["id"], "title": issue["title"],
+                       "service": issue.get("knowledge", {}).get("service") or (issue.get("project") if issue.get("live") else self.svc_key),
+                       "culprit": issue.get("culprit", ""), "event_context": issue.get("event_context"),
+                       "knowledge": issue.get("knowledge"), "layer": issue.get("layer", "front")}
+            self.ai.submit("triage", copy.deepcopy(payload),
+                           (self.stage_gen, issue))
         self.mice.append(Mouse(self, issue))
         if self.view == "traffic":
             self.unseen += 1
@@ -1277,6 +1297,8 @@ class World:
                 issue["ai"] = "failed"  # mock 판정 그대로
                 return
             issue.update(kind=res["kind"], note=res["reason"][:60], fix=res["fix"][:50], ai="done")
+            if (issue.get("knowledge") or {}).get("cases") and not getattr(self.ai, "replay", False):
+                issue["knowledge_usage"] = "triage"
             if res["kind"] != "fixable":
                 issue["review_block"] = False
             return
@@ -1504,6 +1526,17 @@ class World:
             self.order(arg)
         elif op in ("elf", "엘프", "lever"):
             self.elf.command(self, arg)
+        elif op == "kb":
+            rows = [m.issue for m in self.mice] + list(reversed(self.history))
+            row = next((r for r in rows if r["id"].lower() == arg.lower()), None) if arg else next(
+                (r for r in rows if (r.get("knowledge") or {}).get("cases")), None)
+            if row:
+                self.open_history(row["id"])
+                ctx = row.get("knowledge") or {}
+                self.log("📚 %s · %s · %s" % (row["id"], ctx.get("reason", "disabled"),
+                                             ", ".join(c["id"] for c in ctx.get("cases", [])) or "관련 사례 없음"), 117, "all")
+            else:
+                self.log("📚 지식 %d건 · 이슈를 지정하세요: ./market kb WEB-xxx" % (len(self.kb.cases) if self.kb else 0), 117, "all")
         elif op == "prs":
             prs = list(self.fixer.db.items()) if self.fixer else []
             if not prs:
@@ -1538,7 +1571,10 @@ class World:
                         "history_rps": [int(v) for v in self.hist[-20:]]},
             "mice": [{"id": m.issue["id"], "title": m.issue["title"],
                       "kind": "pending" if m.issue.get("ai") == "pending" else m.issue["kind"],
-                      "note": m.issue.get("note", ""), "layer": m.issue.get("layer", "front"),  # front 브라우저 / server 서버
+                      "note": m.issue.get("note", ""),
+                      "knowledge": knowledge.brief(m.issue.get("knowledge")),
+                      "knowledge_usage": m.issue.get("knowledge_usage", "reference-only"),
+                      "layer": m.issue.get("layer", "front"),
                       "rules": m.issue.get("rules") or [],  # 걸린 비즈니스 규칙 {id, action 문의/주의, team}
                       "ask": bool(m.issue.get("ask")), "question": m.issue.get("question", ""),  # 팀 문의 중 · 질문 초안
                       "state": m.state, "chasedBy": None if m.claimed is None else m.claimed + 1}
@@ -1547,6 +1583,9 @@ class World:
             "history": [{"id": r["id"], "outcome": r["outcome"], "soldier": r["soldier"], "mr": r["mr"],
                          "pr": r.get("pr"), "url": r.get("url"), "layer": r.get("layer", "front"),
                          "title": r["title"], "note": r.get("note", ""),
+                         "knowledge": knowledge.brief(r.get("knowledge")),
+                         "knowledge_usage": r.get("knowledge_usage", "reference-only"),
+                         "resolution_status": r.get("resolution_status"),
                          "rules": r.get("rules") or [], "question": r.get("question", "")} for r in self.history[-20:]],
             "soldiers": [{"id": s.idx + 1, "name": s.name, "state": s.state, "off": s.off,
                           "handled": sum(1 for r in self.history if r["soldier"] == s.idx + 1),
@@ -1559,6 +1598,9 @@ class World:
             "ai": {"on": self.ai is not None, "model": self.ai.model if self.ai else None,
                    "calls": self.ai.calls if self.ai else 0, "fails": self.ai.fails if self.ai else 0},
             "view": self.view,
+            "knowledge": {"on": self.kb is not None, "repo": self.kb_repo,
+                          "revision": self.kb.revision if self.kb else "",
+                          "cases": len(self.kb.cases) if self.kb else 0, "errors": self.kb.errors if self.kb else []},
             "report": getattr(self, "last_report", None),
             "log": ["%02d:%02d %s" % (divmod(int(ts), 60) + (text,)) for ts, text, _, _ in self.logs[-12:]],
         }
@@ -2438,6 +2480,24 @@ def history_lines(world, w, n):
     lines = [seg_line([("  🏆 잡은 쥐 기록 ", 226, True), ("총 %d건 " % len(hist), 231, True),
                        ("· MR %d · noise %d · 사람 %d · 문의 %d" % (cnt["fixed"], cnt["noise"], cnt["human"], cnt["ask"]), 250),
                        ("   │ " + per, 117), ("   [r·x·클릭] 닫기", 242)], w, 52)]
+    selected = next((m.issue for m in world.mice if m.issue["id"] == world.hist_sel), None)
+    selected = selected or next((r for r in reversed(hist) if r["id"] == world.hist_sel), {})
+    ctx = selected.get("knowledge") or {}
+    if ctx.get("cases"):
+        used = selected.get("knowledge_usage") == "triage"
+        lines.append(seg_line([("  📚 %s · %s · %s" % (world.hist_sel, "AI 분류에 전달" if used else "검색 참고 자료",
+                                                      ctx.get("revision", "")[:8]), 117, True)], w, 24))
+        for c in ctx["cases"][:2]:
+            lines.append(seg_line([("  %s [%s] %s" % (c["id"], c["status"], c["title"]), 231)], w, 24))
+            lines.append(seg_line([("  근거: " + "; ".join(c["matched_by"]), 250)], w, 24))
+        if ctx.get("rules") and n > 9:
+            lines.append(seg_line([("  규칙: " + ctx["rules"][0]["text"], 220)], w, 24))
+        if n > 12:
+            c = ctx["cases"][0]
+            lines.append(seg_line([("  연결: %s → %s → %s" % (c["service_id"], c["pattern_id"], c["id"]), 117)], w, 24))
+            lines.append(seg_line([("  출처: " + c["sources"][0], 244)], w, 24))
+        if selected.get("resolution_status") == "pr-open":
+            lines.append(seg_line([("  PR 생성 · 머지/배포 후 해결 검증 대기", 220)], w, 24))
     lines.append(seg_line([(" " + pad("결과", 10) + pad("ID", 12) + pad("판정", 13) + pad("병정", 12) + pad("시각", 7)
                             + "AI 판정 근거 │ Sentry 제목", 242)], w, 237))
     live = [m for m in world.mice if m.state == "held" and m.issue["id"] == world.hist_sel]
@@ -2705,6 +2765,18 @@ def attach_ai(world, use_ai=True, replay=None):
                   else "키워드 모드 - OPENAI_API_KEY 를 설정하면 AI 병정이 된다", 245, "all")
 
 
+def attach_knowledge(world):
+    if os.environ.get("XMAS_KB", "on").lower() in ("off", "0", "false"):
+        return False
+    world.kb = knowledge.KnowledgeBase(os.environ.get("XMAS_KB_DIR") or None)
+    world.kb_repo = knowledge.repo_name(os.environ.get("XMAS_FIX_REPO", ""))
+    if world.kb.errors:
+        world.log("📚 지식 파일을 읽지 못함 - 참고 사례 없이 진행", 245, "all")
+        return False
+    world.log("📚 작전 교본 %d건 · 서비스/오류/사례/규칙 연결 · 검색은 OpenAI 0회" % len(world.kb.cases), 117, "all")
+    return True
+
+
 def attach_live(world, feed=None):
     """--live: Sentry 미해결 이슈를 쥐로 쓴다. 설정이 없거나 첫 읽기가 실패하면 mock 으로 돈다."""
     if sentry_live is None or (feed is None and not sentry_live.configured()):
@@ -2803,6 +2875,7 @@ def run_interactive(skip_intro=False, use_ai=True, replay=None, live=False):
     world = World()
     attach_ai(world, use_ai, replay)
     attach_rules(world)
+    attach_knowledge(world)
     if live:
         attach_live_all(world)
     if skip_intro:
@@ -2932,6 +3005,7 @@ def run_stream(w, h, skip_intro=False, use_ai=True, replay=None, live=False):
     world = World()
     attach_ai(world, use_ai, replay)
     attach_rules(world)
+    attach_knowledge(world)
     if live:
         attach_live_all(world)
     if skip_intro:
@@ -3023,11 +3097,17 @@ def main():
     ap.add_argument("--replay", nargs="?", const=REPLAY_DEFAULT, metavar="JSONL",
                     help="API 키 없이 녹화된 실제 AI 트리아지 결과를 재생 (기본 recordings/ai.jsonl)")
     ap.add_argument("--rules", metavar="MD", help="비즈니스 규칙 표 (기본: XMAS_RULES, 없으면 XMAS_FIX_REPO/BUSINESS_RULES.md)")
+    ap.add_argument("--knowledge", metavar="DIR", help="지식 파일 디렉터리 (기본: knowledge/)")
+    ap.add_argument("--no-knowledge", action="store_true", help="사례 검색 끄기 (비즈니스 규칙은 유지)")
     ap.add_argument("--live", action="store_true",
                     help="실연동(읽기 전용): 쥐 = 실제 Sentry 미해결 이슈 (.env 의 SENTRY_*), 트래픽 = 실제 서버 /metrics (TRAFFIC_METRICS_URL)")
     args = ap.parse_args()
     if args.rules:
         os.environ["XMAS_RULES"] = args.rules
+    if args.knowledge:
+        os.environ["XMAS_KB_DIR"] = args.knowledge
+    if args.no_knowledge:
+        os.environ["XMAS_KB"] = "off"
     # mock 모드(--live 없음)는 OpenAI 를 부르지 않는다 (크레딧 보호). --ai 로만 켠다. --replay 는 API 를 안 쓰니 그대로
     args.no_ai = args.no_ai or not (args.live or args.ai or args.replay)
     if args.seed is not None:
@@ -3039,6 +3119,7 @@ def main():
     if args.snapshot is not None:
         w, h = (int(v) for v in args.size.lower().split("x"))
         world = World()
+        attach_knowledge(world)
         if args.view in ("intro", "menu"):
             world.set_view(args.view)
         else:

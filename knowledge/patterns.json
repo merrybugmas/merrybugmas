@@ -1,0 +1,189 @@
+[
+  {
+    "id": "PATTERN-COUPON",
+    "keywords": [
+      "reading 'rate'",
+      "coupon.rate"
+    ],
+    "functions": [
+      "cartTotal"
+    ],
+    "files": [
+      "app.js"
+    ],
+    "error_types": [
+      "TypeError"
+    ],
+    "exclude": [
+      "chrome-extension://",
+      "moz-extension://"
+    ],
+    "layer": "front"
+  },
+  {
+    "id": "PATTERN-GIFTS",
+    "keywords": [
+      "reading 'map'",
+      "data.items.map"
+    ],
+    "functions": [
+      "renderGifts"
+    ],
+    "files": [
+      "app.js"
+    ],
+    "error_types": [
+      "TypeError"
+    ],
+    "exclude": [
+      "chrome-extension://",
+      "moz-extension://"
+    ],
+    "layer": "front"
+  },
+  {
+    "id": "PATTERN-DATE",
+    "keywords": [
+      "Invalid time value",
+      "Invalid Date"
+    ],
+    "functions": [
+      "showDelivery"
+    ],
+    "files": [
+      "app.js"
+    ],
+    "error_types": [
+      "RangeError"
+    ],
+    "exclude": [
+      "chrome-extension://",
+      "moz-extension://"
+    ],
+    "layer": "front"
+  },
+  {
+    "id": "PATTERN-JSON",
+    "keywords": [
+      "Unexpected token '<'",
+      "not valid JSON"
+    ],
+    "functions": [],
+    "files": [
+      "app.js"
+    ],
+    "error_types": [
+      "SyntaxError"
+    ],
+    "exclude": [
+      "chrome-extension://",
+      "moz-extension://"
+    ],
+    "layer": "front"
+  },
+  {
+    "id": "PATTERN-MEMBER",
+    "keywords": [
+      "503 /api/member/info"
+    ],
+    "functions": [
+      "fetchMemberInfo"
+    ],
+    "files": [
+      "app.js"
+    ],
+    "error_types": [
+      "Error"
+    ],
+    "exclude": [],
+    "layer": "front"
+  },
+  {
+    "id": "PATTERN-PAYMENT",
+    "keywords": [
+      "500 /api/payment/confirm"
+    ],
+    "functions": [
+      "confirmPayment"
+    ],
+    "files": [
+      "app.js"
+    ],
+    "error_types": [
+      "Error"
+    ],
+    "exclude": [],
+    "layer": "front"
+  },
+  {
+    "id": "PATTERN-ADS",
+    "keywords": [
+      "ads.bugmas-demo.invalid",
+      "Failed to load third-party script"
+    ],
+    "functions": [
+      "loadScript"
+    ],
+    "files": [
+      "app.js"
+    ],
+    "error_types": [
+      "Error"
+    ],
+    "exclude": [],
+    "layer": "front"
+  },
+  {
+    "id": "PATTERN-STORAGE",
+    "keywords": [
+      "sessionStorage",
+      "localStorage access denied"
+    ],
+    "functions": [],
+    "files": [
+      "app.js"
+    ],
+    "error_types": [
+      "SecurityError"
+    ],
+    "exclude": [
+      "chrome-extension://",
+      "moz-extension://"
+    ],
+    "layer": "front"
+  },
+  {
+    "id": "PATTERN-CHUNK",
+    "keywords": [
+      "ChunkLoadError",
+      "Loading chunk"
+    ],
+    "functions": [],
+    "files": [
+      "app.js"
+    ],
+    "error_types": [
+      "ChunkLoadError"
+    ],
+    "exclude": [],
+    "layer": "front"
+  },
+  {
+    "id": "PATTERN-SORT",
+    "keywords": [
+      "toSorted is not a function"
+    ],
+    "functions": [],
+    "files": [
+      "app.js"
+    ],
+    "error_types": [
+      "TypeError"
+    ],
+    "exclude": [
+      "chrome-extension://",
+      "moz-extension://"
+    ],
+    "layer": "front"
+  }
+]

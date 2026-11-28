@@ -1,0 +1,10 @@
+{"id":"REG-1","repo":"merrybugmas/demo-web","service":"WEB","title":"할인율을 읽을 수 없음","culprit":"cartTotal (app.js)","expected":"CASE-001","kind":"fixable"}
+{"id":"REG-2","repo":"merrybugmas/demo-web","service":"WEB","title":"상품 표시 중 예외","culprit":"renderGifts (app.js)","expected":"CASE-002","kind":"fixable"}
+{"id":"REG-3","repo":"merrybugmas/demo-web","service":"WEB","title":"RangeError: Invalid Date while formatting","culprit":"app.js","expected":"CASE-003","kind":"fixable"}
+{"id":"REG-4","repo":"merrybugmas/demo-web","service":"WEB","title":"SyntaxError: payload is not valid JSON","culprit":"app.js","expected":"CASE-004","kind":"fixable"}
+{"id":"REG-5","repo":"merrybugmas/demo-web","service":"WEB","title":"결제 확인 API 실패","culprit":"confirmPayment (app.js)","expected":"CASE-006","kind":"needs-human"}
+{"id":"REG-6","repo":"merrybugmas/demo-web","service":"WEB","title":"Failed loading ads.bugmas-demo.invalid","culprit":"app.js","expected":"CASE-007","kind":"noise"}
+{"id":"REG-7","repo":"other/demo-web","service":"WEB","title":"TypeError: coupon.rate","culprit":"cartTotal (app.js)","expected":null,"kind":"needs-human"}
+{"id":"REG-8","repo":"merrybugmas/demo-web","service":"PAY","title":"TypeError: coupon.rate","culprit":"cartTotal (app.js)","expected":null,"kind":"needs-human"}
+{"id":"REG-9","repo":"merrybugmas/demo-web","service":"WEB","title":"TypeError: unrelated issue","culprit":"app.js","expected":null,"kind":"needs-human"}
+{"id":"REG-10","repo":"merrybugmas/demo-web","service":"WEB","title":"TypeError: Cannot read properties of null (reading 'rate')","culprit":"chrome-extension://id/app.js","expected":null,"kind":"noise"}

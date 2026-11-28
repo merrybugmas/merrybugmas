@@ -1,0 +1,28 @@
+{
+  "id": "CASE-008",
+  "title": "브라우저 저장소 접근 거부",
+  "service_id": "SERVICE-DEMO-WEB",
+  "pattern_id": "PATTERN-STORAGE",
+  "kind": "fixable",
+  "status": "reference",
+  "rule_ids": [
+    "RULE-STORAGE"
+  ],
+  "summary": "브라우저 저장소 접근 거부",
+  "fix_strategy": "저장소 접근이 거부되는 환경을 처리하고 저장 실패를 명시한다.",
+  "conditions": [
+    "실패가 우리 코드의 저장소 접근에서 발생"
+  ],
+  "avoid": [
+    "인증/보안 정책을 끄지 않는다"
+  ],
+  "tests": [
+    "저장소 허용",
+    "접근 거부"
+  ],
+  "sources": [
+    "https://github.com/merrybugmas/merrybugmas/blob/7ce96f157f586895d2a322967f5bf730cd2e1a3a/tests/data/triage_eval.jsonl"
+  ],
+  "source_blob": "",
+  "verification": "코드/평가 예시에서 정리한 참고 자료. 실제 해결·머지·배포를 검증한 사례가 아님."
+}

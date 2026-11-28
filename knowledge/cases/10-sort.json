@@ -1,0 +1,28 @@
+{
+  "id": "CASE-010",
+  "title": "구형 브라우저 toSorted 미지원",
+  "service_id": "SERVICE-MOCK-RESUME",
+  "pattern_id": "PATTERN-SORT",
+  "kind": "fixable",
+  "status": "reference",
+  "rule_ids": [
+    "RULE-SORT"
+  ],
+  "summary": "구형 브라우저 toSorted 미지원",
+  "fix_strategy": "지원 브라우저에 맞는 정렬 방식으로 바꾸되 원본 배열과 정렬 기준을 유지한다.",
+  "conditions": [
+    "실패 원인이 미지원 toSorted API임을 확인"
+  ],
+  "avoid": [
+    "원본 배열을 직접 정렬해 상태를 바꾸지 않는다"
+  ],
+  "tests": [
+    "원본 불변성",
+    "최신 경력 우선 정렬"
+  ],
+  "sources": [
+    "https://github.com/merrybugmas/merrybugmas/blob/7ce96f157f586895d2a322967f5bf730cd2e1a3a/tests/data/triage_eval.jsonl"
+  ],
+  "source_blob": "",
+  "verification": "코드/평가 예시에서 정리한 참고 자료. 실제 해결·머지·배포를 검증한 사례가 아님."
+}

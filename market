@@ -21,6 +21,7 @@ case "${1:-help}" in
 ./market tell 엘프 <말>           엘프(트래픽 대응)에게: 캐시 켜/꺼 · 계산대 6 · 번호표 켜/꺼 · 승인 · 거절 · 원복 · 보고 · 자동 꺼/켜
                                 (= ./market elf <말>, OpenAI 안 씀)
 ./market history [ISSUE-ID|off] 잡은 쥐 기록 창 (ID 를 주면 그 쥐 줄 강조)
+./market kb [ISSUE-ID]          이슈의 참고 사례·검색 이유·업무 규칙을 기록 창에 표시
 ./market prs                    병정이 실제로 연 PR 목록을 로그에 (--live + XMAS_FIX_REPO 일 때)
 ./market human                  우리 속(needs-human) 쥐 처리 완료
 ./market brief                  AI 운영 브리핑 (현황 3줄 + 권고. AI 가 꺼져 있으면 숫자 한 줄)

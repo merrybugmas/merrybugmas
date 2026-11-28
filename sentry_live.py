@@ -67,7 +67,40 @@ def to_issue(row):
         "url": row.get("permalink") or "",
         "culprit": str(row.get("culprit") or "")[:120],
         "count": row.get("count"),
+        "sentry_id": str(row.get("id") or ""),
+        "project": (row.get("project") or {}).get("slug", "") if isinstance(row.get("project"), dict) else "",
+        "platform": str(row.get("platform") or ""),
     }
+
+
+def event_context(event):
+    """대표 이벤트의 허용 필드만 추출. 사용자/요청 본문/쿠키/locals는 보관하지 않는다."""
+    if not isinstance(event, dict):
+        raise ValueError("이벤트 객체가 아님")
+    frames, types = [], []
+    for entry in event.get("entries") or []:
+        if entry.get("type") != "exception":
+            continue
+        for exc in (entry.get("data") or {}).get("values", [])[-3:]:
+            types.append(str(exc.get("type") or "")[:100])
+            for f in (exc.get("stacktrace") or {}).get("frames", [])[-8:]:
+                filename = str(f.get("filename") or f.get("absPath") or "")
+                filename = filename.split("?")[0].split("#")[0]
+                # URL 인증정보/로컬 사용자명은 제외하고, 확장 출처는 구분할 수 있게 남긴다.
+                if "://" in filename:
+                    parsed = urllib.parse.urlsplit(filename)
+                    filename = ((parsed.scheme + "://") if parsed.scheme in ("chrome-extension", "moz-extension") else "") + parsed.path
+                if filename.startswith(("/Users/", "/home/")):
+                    filename = filename.rsplit("/", 1)[-1]
+                frames.append({"filename": filename[:200], "function": str(f.get("function") or "")[:120],
+                               "line": f.get("lineNo"), "in_app": f.get("inApp")})
+    tags = {t.get("key"): t.get("value") for t in event.get("tags", []) if isinstance(t, dict)}
+    release = event.get("release") or tags.get("release", "")
+    if isinstance(release, dict):
+        release = release.get("version", "")
+    return {"event_id": str(event.get("eventID") or event.get("id") or "")[:100],
+            "exception_types": types, "frames": frames[-12:], "release": str(release)[:160],
+            "environment": str(event.get("environment") or tags.get("environment") or "")[:80]}
 
 
 class SentryFeed:
@@ -76,7 +109,7 @@ class SentryFeed:
     transport(url) -> 응답 JSON(list) 을 바꿔 끼우면 테스트에서 네트워크 없이 쓴다.
     """
 
-    def __init__(self, transport=None, interval=None, timeout=8.0):
+    def __init__(self, transport=None, interval=None, timeout=8.0, with_context=None):
         env = os.environ.get
         self.base = env("SENTRY_URL", "").strip().rstrip("/") or "https://sentry.io"
         self.org, self.project = env("SENTRY_ORG", "").strip(), env("SENTRY_PROJECT", "").strip()
@@ -85,6 +118,8 @@ class SentryFeed:
         self.interval = float(env("SENTRY_POLL", "").strip() or 15) if interval is None else interval
         self.timeout = timeout
         self.transport = transport or self._get
+        self.with_context = (env("SENTRY_EVENT_CONTEXT", "off").lower() in ("on", "1", "true")
+                             if with_context is None else with_context)
         self.seen, self.fresh = {}, queue.Queue()  # seen: id → 이슈 (본 순서대로)
         self.calls = self.fails = 0
         self.last_error = None
@@ -110,9 +145,21 @@ class SentryFeed:
             self.last_error = describe(e)
             raise
         n = 0
-        with self.lock:
-            for row in reversed(rows[:self.limit]):  # 오래된 것부터
-                issue = to_issue(row)
+        for row in reversed(rows[:self.limit]):  # 오래된 것부터
+            issue = to_issue(row)
+            issue["project"] = issue["project"] or self.project
+            with self.lock:
+                if issue["id"] in self.seen:
+                    continue
+            # 첫 수집/피드 worker에서 처리. lock을 잡고 네트워크를 기다리지 않는다.
+            if self.with_context and issue["sentry_id"]:
+                try:
+                    url = "%s/api/0/organizations/%s/issues/%s/events/latest/" % (
+                        self.base, urllib.parse.quote(self.org, safe=""), urllib.parse.quote(issue["sentry_id"], safe=""))
+                    issue["event_context"] = event_context(self.transport(url))
+                except Exception as e:  # 이벤트 상세 조회 실패는 이슈 자체를 버리지 않는다
+                    issue["event_context_error"] = type(e).__name__
+            with self.lock:
                 if issue["id"] not in self.seen:
                     self.seen[issue["id"]] = issue
                     self.fresh.put(dict(issue))

@@ -1,0 +1,30 @@
+{
+  "id": "CASE-004",
+  "title": "HTML 응답의 JSON 파싱",
+  "service_id": "SERVICE-DEMO-WEB",
+  "pattern_id": "PATTERN-JSON",
+  "kind": "fixable",
+  "status": "reference",
+  "rule_ids": [
+    "RULE-JSON"
+  ],
+  "summary": "HTML 응답의 JSON 파싱",
+  "fix_strategy": "HTTP 상태와 응답 타입을 확인해 비정상 응답을 오류 상태로 처리한다.",
+  "conditions": [
+    "공지 API가 JSON 계약과 다른 HTML을 반환했다"
+  ],
+  "avoid": [
+    "백엔드 장애를 프론트 수정만으로 해결했다고 주장하지 않는다",
+    "빈 객체를 정상 성공으로 반환하지 않는다"
+  ],
+  "tests": [
+    "정상 JSON",
+    "HTML 점검 응답",
+    "HTTP 오류"
+  ],
+  "sources": [
+    "https://github.com/merrybugmas/demo-web/blob/main/app.js"
+  ],
+  "source_blob": "137c1cb4c6374990cdefc8bc69b2a88a932c1e99",
+  "verification": "코드/평가 예시에서 정리한 참고 자료. 실제 해결·머지·배포를 검증한 사례가 아님."
+}

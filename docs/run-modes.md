@@ -65,3 +65,14 @@ cd ~/demo-web && python3 server.py              # http://localhost:8765 (+ /metr
 python3 loadgen.py 25                            # 평소 손님 25 rps (급증: --spike 110 --at 15 --for 30)
 cd ~/merrybugmas && python3 xmas_market.py --live   # .env: TRAFFIC_METRICS_URL=http://localhost:8765/metrics
 ```
+
+## 사례 검색 RAG
+
+- 기본: `knowledge/`의 참고 사례를 읽는다. 검색은 키 없이 실행되고 모델 호출을 늘리지 않는다.
+- `--knowledge DIR` / `XMAS_KB_DIR`: 지식 디렉터리. `--no-knowledge` / `XMAS_KB=off`: 사례 검색 끄기.
+- `XMAS_KB_REPO`: 고칠 레포의 owner/repo. 없으면 XMAS_FIX_REPO의 GitHub origin을 사용한다.
+- 실연동 서비스는 `knowledge/services.json`의 projects와 Sentry project slug로 연결한다. 현재 화면 선택값으로 추측하지 않는다.
+- `SENTRY_EVENT_CONTEXT=on`: 대표 이벤트의 스택/릴리즈를 추가 조회한다 (기본 off, 처음 본 이슈당 1회).
+- `python3 tools/demo_knowledge.py`: API 키 없이 지식 근거 화면. 모델 응답/PR을 생성하지 않는다.
+- `--replay` 결과는 녹화본 그대로이며 새 지식으로 재분류한 것으로 표시하지 않는다.
+- 상세: [knowledge-base.md](knowledge-base.md).
