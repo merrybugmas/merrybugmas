@@ -117,9 +117,10 @@ def adopt(run_id):
 
 
 # 한도 파일의 범위 안에서 유입 조건 선택
-def randomized(seed):
+def randomized(seed, verify=False):
     rng = random.Random(seed)
-    count = rng.randint(*LIMITS["request_count"])
+    # 화면에 보이는 고객 급증은 길게 보내고 수정 뒤 확인은 같은 속도의 짧은 유입으로 함
+    count = rng.randint(*LIMITS["verify_request_count" if verify else "request_count"])
     rate = rng.randint(*LIMITS["rate_per_s"])
 
     return {"scenario_id": "surge", "request_count": count, "arrival_duration_s": round(count / rate, 2),

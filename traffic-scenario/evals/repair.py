@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.request
@@ -14,6 +15,7 @@ from agent_bridge import publish
 from . import runner
 
 ROOT = Path(__file__).resolve().parents[1]
+LIMITS = json.loads((ROOT / "agent_bridge" / "limits.json").read_text())
 
 
 # 운영 서버에서 가장 최근에 보낸 실험의 번호와 유입 조건 조회
@@ -28,9 +30,20 @@ def latest_run(data_dir):
     return folder.name, json.loads((folder / "config.json").read_text())
 
 
+# 운영에서 난 유입과 같은 속도와 같은 순서의 앞부분만 시험 서버에 보낼 조건으로 축소
+def sample(config):
+    limit = LIMITS["verify_request_count"][1]
+    count = min(config["request_count"], limit)
+    # 대기열은 몇 초 안에 차므로 같은 속도면 짧은 유입으로도 같은 문제가 재현되고 검증 시간이 줄어듦
+    duration = round(config["arrival_duration_s"] * count / config["request_count"], 2)
+
+    return {**config, "request_count": count, "arrival_duration_s": duration}
+
+
 # 시험 서버의 진행 상황을 운영 서버의 화면에 전달
 def notifier(control, run_id):
     def notify(phase, message):
+        print(f"[{phase}] {message}", file=sys.stderr, flush=True)
         body = {"run_id": run_id, "operation_id": "agent", "message_id": "msg-" + uuid.uuid4().hex[:16], "phase": phase, "message": message}
         request = urllib.request.Request(control + "/api/agent/progress", data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
 
@@ -49,8 +62,9 @@ def repair(data_dir, control, confirm=False, draft=True, agent=True, model="gpt-
     notify = notifier(control, run_id)
     notify("analyzing", "운영 서버는 그대로 두고 시험 서버를 따로 준비합니다.")
     dest = Path(tempfile.mkdtemp(prefix="mbm-repair-")) / time.strftime("%H%M%S")
+    print(f"시험 환경: {dest}", file=sys.stderr, flush=True)
     result = runner.run_once("live", dest, Path(data_dir) / "catalog.sqlite", agent=agent, model=model, effort=effort, timeout=timeout,
-                             load=config, strip=False, notify=notify)
+                             load=sample(config), strip=False, notify=notify, relay=(control, run_id))
     out = {"production_run": run_id, "test_environment": result["root"], "test_port": result["port"], "load": result.get("load"),
            "outcome": result.get("outcome"), "passed": result.get("passed"), "decisions": result.get("decisions")}
 

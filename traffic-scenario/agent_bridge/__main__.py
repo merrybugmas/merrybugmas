@@ -54,7 +54,7 @@ def main():
         seed = args.seed if args.seed is not None else random.SystemRandom().randrange(1_000_000)
 
         if args.random:
-            body = ops.randomized(seed)
+            body = ops.randomized(seed, verify=True)
         elif args.count and args.duration:
             body = {"scenario_id": "surge", "request_count": args.count, "arrival_duration_s": args.duration,
                     "seed": seed, "client_timeout_ms": args.timeout_ms}

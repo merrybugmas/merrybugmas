@@ -1,8 +1,11 @@
 # 작업 폴더에서 온 명령을 심판 폴더의 실험 도구로 실행하는 심판 프로세스
 import argparse
 import json
+import os
 import subprocess
 import sys
+import urllib.request
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -18,7 +21,28 @@ def execute(argv):
 
     done = subprocess.run([sys.executable, "-B", "-m", "agent_bridge", *argv], cwd=ROOT, capture_output=True, text=True)
 
+    if argv[0] == "progress" and len(argv) >= 4:
+        relay(argv[2], argv[3])
+
     return {"output": done.stdout or done.stderr, "code": done.returncode}
+
+
+# 시험 서버에서 남긴 진행 알림을 실행한 터미널과 운영 서버의 화면에 전달
+def relay(phase, message):
+    print(f"[{phase}] {message}", file=sys.stderr, flush=True)
+    control, run_id = os.getenv("MBM_RELAY_CONTROL"), os.getenv("MBM_RELAY_RUN")
+
+    if not control or not run_id:
+        return
+
+    body = {"run_id": run_id, "operation_id": "agent", "message_id": "msg-" + uuid.uuid4().hex[:16], "phase": phase, "message": message}
+    request = urllib.request.Request(control + "/api/agent/progress", data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
+
+    # 화면 알림이 실패해도 명령 결과는 그대로 돌려줌
+    try:
+        urllib.request.urlopen(request, timeout=3).close()
+    except OSError:
+        pass
 
 
 # 작업 폴더의 명령 요청 수신

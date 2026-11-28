@@ -6,7 +6,7 @@ from pathlib import Path
 
 from agent_bridge import __main__ as entry
 from agent_bridge import guard
-from evals import judge, make_workspace, runner, score_run
+from evals import judge, make_workspace, repair, runner, score_run
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -130,3 +130,21 @@ def test_score_separates_repair_from_untouched_and_unresolved(tmp_path):
     (work / "loadgen.py").write_text("x = 2\n")
     out = score_run.score(log, work, "a")
     assert not out["passed"] and out["changed_outside_allowed"] == ["traffic-scenario/loadgen.py"]
+
+
+def test_verification_load_is_a_short_sample_at_the_same_rate():
+    config = {"scenario_id": "surge", "request_count": 6000, "arrival_duration_s": 60.0, "seed": 9, "client_timeout_ms": 5000}
+    short = repair.sample(config)
+    assert short["request_count"] == 1000 and short["arrival_duration_s"] == 10.0 and short["seed"] == 9
+    assert repair.sample({**config, "request_count": 500, "arrival_duration_s": 5.0})["request_count"] == 500
+
+
+def test_judge_relays_agent_progress_to_production_screen(monkeypatch):
+    sent = []
+    monkeypatch.setattr(judge.subprocess, "run", lambda cmd, **kw: type("Done", (), {"stdout": "{}", "stderr": "", "returncode": 0})())
+    monkeypatch.setenv("MBM_RELAY_CONTROL", "http://127.0.0.1:1")
+    monkeypatch.setenv("MBM_RELAY_RUN", "run-prod")
+    monkeypatch.setattr(judge.urllib.request, "urlopen", lambda request, timeout: sent.append(json.loads(request.data)) or type("R", (), {"close": lambda self: None})())
+    judge.execute(["progress", "run-test", "analyzing", "가설"])
+    judge.execute(["scope"])
+    assert len(sent) == 1 and sent[0]["run_id"] == "run-prod" and sent[0]["phase"] == "analyzing" and sent[0]["message"] == "가설"

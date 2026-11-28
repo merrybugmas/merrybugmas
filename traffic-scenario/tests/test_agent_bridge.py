@@ -63,6 +63,8 @@ def test_random_conditions_stay_inside_limits():
         assert verify.LIMITS["rate_per_s"][0] - 1 <= rate <= verify.LIMITS["rate_per_s"][1] + 1
 
     assert cli.randomized(7) == cli.randomized(7)
+    low, high = verify.LIMITS["verify_request_count"]
+    assert all(low <= cli.randomized(s, verify=True)["request_count"] <= high for s in range(50))
     assert len({json.dumps(cli.randomized(random.Random(i).randrange(10**6))) for i in range(20)}) > 1
 
 

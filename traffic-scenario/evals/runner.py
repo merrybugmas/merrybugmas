@@ -62,7 +62,7 @@ def free_ports(start=18200):
 
 # 평가 한 번 실행
 def run_once(state, dest, catalog, rules="study", effort="medium", timeout=1800, port=None, seed=None, agent=True, model="gpt-6.2-sol",
-             load=None, strip=True, notify=None):
+             load=None, strip=True, notify=None, relay=None):
     port = port or free_ports()
     notify = notify or (lambda phase, message: None)
     info = make_workspace.build(state, dest, catalog, rules, port, strip)
@@ -70,6 +70,11 @@ def run_once(state, dest, catalog, rules="study", effort="medium", timeout=1800,
     env = {**os.environ, "MBM_PRODUCT_COUNT": str(info["product_count"]), "MBM_POLICIES": "agent_bridge/policies.json",
            "MBM_TARGET_PORT": str(port + 1), "MBM_TARGET_URL": f"http://127.0.0.1:{port + 1}", "MBM_CONTROL_URL": f"http://127.0.0.1:{port}"}
     env.pop("MBM_DATA_DIR", None)
+
+    # 시험 서버의 진행 알림을 전달할 운영 서버 주소와 실험 번호
+    if relay:
+        env.update(MBM_RELAY_CONTROL=relay[0], MBM_RELAY_RUN=relay[1])
+
     procs, result = [], {"state": state, "rules": rules, "model": model, "effort": effort}
 
     try:
