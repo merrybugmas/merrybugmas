@@ -34,6 +34,8 @@ def initialize(path: Path, count=100000, seed=42):
         con.execute("CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL)")
 
         if con.execute("SELECT 1 FROM metadata WHERE key='dataset_hash'").fetchone():
+            con.execute(INDEX_SQL)
+
             return
 
         con.execute("CREATE TABLE products(product_id INTEGER PRIMARY KEY,name TEXT NOT NULL,category TEXT NOT NULL,price INTEGER NOT NULL,shop_name TEXT NOT NULL,location TEXT NOT NULL)")
