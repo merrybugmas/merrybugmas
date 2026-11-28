@@ -1,0 +1,68 @@
+diff --git a/traffic-scenario/backend/catalog.py b/traffic-scenario/backend/catalog.py
+index d13f6af..906733b 100644
+--- a/traffic-scenario/backend/catalog.py
++++ b/traffic-scenario/backend/catalog.py
+@@ -8,7 +8,8 @@ from pathlib import Path
+ CATEGORIES = ["cookie", "gift", "ornament", "hot_choco", "toy"]
+ NAMES = {"cookie": "쿠키", "gift": "선물", "ornament": "장식", "hot_choco": "핫초코", "toy": "장난감"}
+ QUERY = """SELECT product_id,name,price,shop_name,location FROM products
+-WHERE category=? AND price<=? ORDER BY price,product_id LIMIT 10"""
++WHERE category=? AND price<=? ORDER BY price,product_id"""
++STOCK_QUERY = "SELECT quantity FROM stock WHERE product_id=?"
+ INDEX_SQL = "CREATE INDEX IF NOT EXISTS idx_products_category_price_id ON products(category,price,product_id)"
+ 
+ 
+@@ -34,6 +35,8 @@ def initialize(path: Path, count=100000, seed=42):
+         con.execute("CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL)")
+ 
+         if con.execute("SELECT 1 FROM metadata WHERE key='dataset_hash'").fetchone():
++            stock(con, seed)
++
+             return
+ 
+         con.execute("CREATE TABLE products(product_id INTEGER PRIMARY KEY,name TEXT NOT NULL,category TEXT NOT NULL,price INTEGER NOT NULL,shop_name TEXT NOT NULL,location TEXT NOT NULL)")
+@@ -54,12 +57,43 @@ def initialize(path: Path, count=100000, seed=42):
+             con.executemany("INSERT INTO products VALUES(?,?,?,?,?,?)", batch)
+ 
+         con.executemany("INSERT INTO metadata VALUES(?,?)", [("dataset_hash", "sha256:" + h.hexdigest()), ("count", str(count)), ("seed", str(seed))])
++        stock(con, seed)
++
++
++# 상품별 재고 수량 데이터 생성
++def stock(con, seed):
++    con.execute("CREATE TABLE IF NOT EXISTS stock(product_id INTEGER PRIMARY KEY,quantity INTEGER NOT NULL)")
++
++    if con.execute("SELECT 1 FROM stock LIMIT 1").fetchone():
++        return
++
++    rng = random.Random(seed)
++    ids = [r[0] for r in con.execute("SELECT product_id FROM products ORDER BY product_id")]
++    con.executemany("INSERT INTO stock VALUES(?,?)", ((i, rng.randint(1, 20) if rng.random() < 0.01 else 0) for i in ids))
++
++
++# 상품 한 개의 재고 여부 조회
++def in_stock(path, product_id):
++    with connect(path) as con:
++        row = con.execute(STOCK_QUERY, (product_id,)).fetchone()
++
++    return bool(row and row["quantity"] > 0)
+ 
+ 
+ # 조건에 맞는 상품 DB 조회
+ def search(path, category, max_price):
++    items = []
++
+     with connect(path) as con:
+-        return [dict(r) for r in con.execute(QUERY, (category, max_price))]
++        for row in con.execute(QUERY, (category, max_price)):
++            # 품절 상품은 안내하지 않도록 재고 확인
++            if in_stock(path, row["product_id"]):
++                items.append(dict(row))
++
++                if len(items) == 10:
++                    break
++
++    return items
+ 
+ 
+ # 현재 DB 스키마 조회
