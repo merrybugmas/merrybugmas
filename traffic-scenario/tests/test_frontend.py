@@ -147,6 +147,7 @@ class TrafficFrontendTests(unittest.TestCase):
             session.execute(['surge', '1001'])
         session.execute(['surge', '1000', '.5'])
         self.assertEqual(calls[0][2]['arrival_duration_s'], .5)
+        self.assertEqual(calls[0][2]['seed'], 42)
         first = session.run_id
         session.run = snapshot(first, 'completed')
         session.execute(['replay'])
@@ -609,6 +610,32 @@ class TrafficFrontendTests(unittest.TestCase):
         self.assertEqual(session.status()['peak_waiting'], 7)
         session.execute(['surge'])
         self.assertEqual(session.status()['peak_waiting'], 0)
+
+    # 조건 없는 고객 급증은 한도 파일 범위에서 무작위로 전송
+    def test_surge_without_arguments_uses_random_condition_inside_limits(self):
+        calls = []
+
+        # 네트워크 대신 API 요청 본문 기록
+        def api(method, path, body=None):
+            calls.append(body)
+            return {'run_id': 'run-' + str(len(calls))}
+
+        limits = json.loads((Path(__file__).resolve().parents[1] / 'agent_bridge' / 'limits.json').read_text())
+
+        for _ in range(30):
+            session = Session('http://127.0.0.1:8000', transport=api)
+            session.execute(['surge'])
+
+        for body in calls:
+            rate = body['request_count'] / body['arrival_duration_s']
+            self.assertTrue(limits['request_count'][0] <= body['request_count'] <= limits['request_count'][1])
+            self.assertTrue(limits['rate_per_s'][0] - 1 <= rate <= limits['rate_per_s'][1] + 1)
+            self.assertEqual(body['scenario_id'], 'surge')
+
+        self.assertGreater(len({(b['request_count'], b['arrival_duration_s'], b['seed']) for b in calls}), 1)
+        session = Session('http://127.0.0.1:8000', transport=api)
+        session.execute(['normal'])
+        self.assertEqual((calls[-1]['request_count'], calls[-1]['arrival_duration_s'], calls[-1]['seed']), (1000, 30, 42))
 
 
 if __name__ == '__main__':

@@ -1,7 +1,9 @@
 import copy
 from collections import deque
 import json
+from pathlib import Path
 import queue
+import random
 import threading
 import time
 import urllib.error
@@ -15,6 +17,15 @@ STATES = {'received': '접수', 'queued': '대기', 'processing': '안내 중', 
           'failed': '실패', 'cancelled': '취소', 'success': '완료', 'http_error': '요청 거절',
           'timeout': '시간 초과', 'connection_error': '연결 오류'}
 CATEGORIES = {'cookie': '쿠키', 'gift': '선물', 'ornament': '장식', 'hot_choco': '핫초코', 'toy': '장난감'}
+LIMITS = Path(__file__).resolve().parents[1] / 'agent_bridge' / 'limits.json'
+
+
+# 고객 급증의 요청 수와 유입 시간과 seed를 한도 파일 범위에서 무작위로 선택
+def surge_condition():
+    limits = json.loads(LIMITS.read_text())
+    count = random.randint(*limits['request_count'])
+
+    return count, round(count / random.randint(*limits['rate_per_s']), 2), random.randrange(1_000_000)
 
 
 # 측정되지 않은 값은 빈 값으로 구분
@@ -156,12 +167,16 @@ class Session:
                         raise ValueError('완료된 실험만 재실험할 수 있습니다.')
                     body = {'source_run_id': self.run_id}
                 else:
+                    seed = 42
                     count = int(args[0]) if args else 1000
                     duration = float(args[1]) if len(args) > 1 else (30 if action == 'normal' else 2)
+                    # 조건을 지정하지 않은 고객 급증은 부하 실행기가 밀리지 않는 범위에서 매번 다르게 보냄
+                    if action == 'surge' and not args:
+                        count, duration, seed = surge_condition()
                     if not 1 <= count <= 1000 or not 0 < duration <= 3600:
                         raise ValueError('고객 1~1000명과 유입 시간 0초 초과 3600초 이하를 입력하세요.')
                     body = {'scenario_id': action, 'request_count': count, 'arrival_duration_s': duration,
-                            'seed': 42, 'client_timeout_ms': 5000}
+                            'seed': seed, 'client_timeout_ms': 5000}
             value = self.transport('POST', '/api/runs', body)
             with self.lock:
                 self.baseline = (self.baseline or previous) if action == 'replay' else None
