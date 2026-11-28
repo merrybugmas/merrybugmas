@@ -1,0 +1,9 @@
+{
+  "request_count": [600, 1000],
+  "rate_per_s": [70, 150],
+  "client_timeout_ms": 5000,
+  "goal_success_rate": 0.99,
+  "max_send_lag_p95_ms": 200,
+  "criteria_id": "demo-v1",
+  "repeats": 3
+}

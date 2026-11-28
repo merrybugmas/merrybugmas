@@ -1,0 +1,9 @@
+{
+  "demo-v1": {
+    "min_repeats": 3,
+    "min_sent": 100,
+    "min_relative_improvement": 0.05,
+    "allowed_relative_regression": 0.02,
+    "max_failure_rate_increase": 0.0
+  }
+}
